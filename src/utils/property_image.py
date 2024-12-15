@@ -21,7 +21,10 @@ class PropertyImageError(Exception):
 class PropertyImageBot:
     def __init__(self):
         """Initialize the property image bot with geocoder and API key."""
-        self.geolocator = Nominatim(user_agent="chicago_dig_bot")
+        self.geolocator = Nominatim(
+            user_agent="chicago_dig_bot",
+            timeout=5  # Increase timeout to 5 seconds
+        )
         self.api_key = os.getenv('GOOGLE_MAPS_API_KEY')
         if not self.api_key:
             raise PropertyImageError("GOOGLE_MAPS_API_KEY environment variable not found")
@@ -54,7 +57,7 @@ class PropertyImageBot:
                 'return_error_code': True
             }
             
-            response = requests.get(f"{base_url}", params=params)
+            response = requests.get(f"{base_url}", params=params, timeout=10)  # Add 10 second timeout
             
             if response.status_code == 200:
                 # Create filename from sanitized address
@@ -86,11 +89,24 @@ class PropertyImageBot:
         try:
             logger.info(f"Processing address: {address}")
             
-            # Geocode the address
-            location = self.geolocator.geocode(address)
+            # Geocode the address with retry logic
+            max_retries = 3
+            retry_delay = 1  # seconds
+            
+            for attempt in range(max_retries):
+                try:
+                    location = self.geolocator.geocode(address)
+                    if location:
+                        logger.info(f"Successfully geocoded address: {location.latitude}, {location.longitude}")
+                        break
+                    elif attempt < max_retries - 1:  # Don't sleep on last attempt
+                        time.sleep(retry_delay)
+                except GeocoderTimedOut:
+                    if attempt < max_retries - 1:  # Don't sleep on last attempt
+                        time.sleep(retry_delay)
+                    continue
+            
             if location:
-                logger.info(f"Successfully geocoded address: {location.latitude}, {location.longitude}")
-                
                 # Fetch and save street view image
                 image_path = self.get_street_view_image(
                     location.latitude, 
@@ -109,6 +125,6 @@ class PropertyImageBot:
                 raise PropertyImageError(f"Could not geocode address: {address}")
                 
         except GeocoderTimedOut:
-            raise PropertyImageError("Geocoding timed out")
+            raise PropertyImageError("Geocoding timed out after all retries")
         except Exception as e:
             raise PropertyImageError(f"Error processing address: {str(e)}")

@@ -36,7 +36,7 @@ analytics:
   stats:
     emergency_threshold_hours: 2
     aggregation_period: "day"
-    rolling_window_days: 7    # For rolling averages
+    rolling_window_days: 730    # Changed to 730 days (2 years) for more accurate historical day-of-week averages
     day_comparison:
       min_history_days: 14    # Minimum days of history needed for day-of-week comparison
       exclude_holidays: true  # Whether to exclude holidays from historical averages
@@ -68,9 +68,6 @@ visualization:
 # Social Media Settings
 social:
   bluesky:
-    # Credentials should be set as environment variables
-    username: "${BLUESKY_HANDLE}"  # Updated to match .env variable name
-    password: "${BLUESKY_PASSWORD}"
     # Thread post templates
     thread_templates:
       summary: |

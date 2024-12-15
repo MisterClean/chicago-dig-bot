@@ -1,26 +1,90 @@
 """Script to post a random permit's street view image to Bluesky."""
 import sys
+import os
 from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent.parent))
+
+# Set up the correct working directory
+project_root = Path(__file__).parent.parent.parent
+os.chdir(project_root)
+sys.path.append(str(project_root))
 
 import pandas as pd
 import random
 import glob
 from datetime import datetime, timedelta
 import logging
-import os
 from src.utils.property_image import PropertyImageBot
 from src.social.bluesky import BlueskyPoster
 from src.utils.logging import get_logger, setup_logging
 from dotenv import load_dotenv
+import requests
+from bs4 import BeautifulSoup
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from the correct .env file
+load_dotenv(project_root / '.env')
 
 # Set up logging
 setup_logging()
 logger = get_logger(__name__)
 logger.setLevel(logging.INFO)
+
+# Bluesky character limit
+BLUESKY_CHAR_LIMIT = 300
+
+def get_dig_location_from_website(ticket_number):
+    """Get the location of dig information from the Chicago 811 website."""
+    try:
+        url = f"https://ipi.cityofchicago.org/Digger/DT/Index/{ticket_number}"
+        response = requests.get(url)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Find the row containing "Location of Dig"
+        rows = soup.find_all('div', class_='row')
+        for row in rows:
+            label = row.find('label')
+            if label and "Location of Dig" in label.text:
+                # Get the value div in the same row
+                value_div = row.find('div', class_='col-sm-8')
+                if value_div:
+                    return value_div.text.strip()
+        return None
+    except Exception as e:
+        logger.error(f"Error fetching dig location from website: {str(e)}")
+        return None
+
+def format_post_text(permit, dig_location=None):
+    """Format the post text with character limit handling."""
+    # Start with the fixed parts of the text
+    base_text = "🎲 Hole Roulette!\n\n"
+    base_text += "Here's a permit with a Dig Date yesterday\n\n"
+    base_text += f"📍 {permit['address']}\n"
+    base_text += f"🔧 {permit['work_type']}\n"
+    
+    # Calculate remaining characters for location field
+    end_text = f"📝 Permit #{permit['application_number']}"
+    if permit['is_emergency']:
+        end_text += "\n🚨 Emergency Work"
+    
+    # Calculate available space for location
+    available_chars = BLUESKY_CHAR_LIMIT - len(base_text) - len(end_text)
+    
+    # If we have a dig location, try to add it
+    if dig_location:
+        location_text = f"🚧 Location of Dig: {dig_location}\n"
+        if len(location_text) > available_chars:
+            # Truncate the dig location to fit
+            max_location_length = available_chars - len("🚧 Location of Dig: ...\n")
+            if max_location_length > 0:
+                truncated_location = dig_location[:max_location_length] + "..."
+                location_text = f"🚧 Location of Dig: {truncated_location}\n"
+            else:
+                # If we can't fit even a truncated version, skip the location
+                location_text = ""
+        base_text += location_text
+    
+    return base_text + end_text
 
 def get_random_permit_from_yesterday():
     """Get a random permit that started digging yesterday from parquet files."""
@@ -82,6 +146,7 @@ def main():
     try:
         # Debug: Print environment variables
         logger.info(f"BLUESKY_HANDLE: {os.getenv('BLUESKY_HANDLE')}")
+        logger.info(f"Working directory: {os.getcwd()}")
         
         logger.info("Starting random permit post process")
         
@@ -92,6 +157,10 @@ def main():
             return
             
         logger.info(f"Processing permit {permit['application_number']}")
+        
+        # Get dig location from website
+        dig_location = get_dig_location_from_website(permit['application_number'])
+        logger.info(f"Got dig location from website: {dig_location}")
         
         # Get street view image
         image_bot = PropertyImageBot()
@@ -104,17 +173,11 @@ def main():
         image_path = image_result['image_path']
         logger.info(f"Successfully got street view image: {image_path}")
         
-        # Format post text
-        post_text = "🎲 Hole Roulette!\n\n"
-        post_text += "Here's a permit with a Dig Date yesterday\n\n"
-        post_text += f"📍 {permit['address']}\n"
-        post_text += f"🔧 {permit['work_type']}\n"
-        post_text += f"📝 Permit #{permit['application_number']}"
-        if permit['is_emergency']:
-            post_text += "\n🚨 Emergency Work"
-            
+        # Format post text with character limit handling
+        post_text = format_post_text(permit, dig_location)
         logger.info("Post text formatted:")
         logger.info(post_text)
+        logger.info(f"Post length: {len(post_text)} characters")
         
         # Post to Bluesky
         bluesky = BlueskyPoster()

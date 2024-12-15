@@ -116,14 +116,6 @@ class Config:
     @property
     def heatmap_colors(self) -> dict:
         return self._get_nested('visualization', 'heatmap', 'colors')
-        
-    @property
-    def bluesky_username(self) -> str:
-        return self._get_nested('social', 'bluesky', 'username')
-        
-    @property
-    def bluesky_password(self) -> str:
-        return self._get_nested('social', 'bluesky', 'password')
 
     @property
     def thread_templates(self) -> dict:
