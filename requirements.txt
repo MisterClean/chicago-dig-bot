@@ -1,0 +1,32 @@
+aiohttp==3.8.5
+aiosignal==1.3.1
+async-timeout==4.0.3
+attrs==23.1.0
+certifi==2023.7.22
+charset-normalizer==3.2.0
+frozenlist==1.4.0
+idna==3.4
+multidict==6.0.4
+numpy==1.25.2
+pandas==2.0.3
+python-dateutil==2.8.2
+pytz==2023.3
+requests==2.31.0
+six==1.16.0
+tzdata==2023.3
+urllib3==2.0.4
+yarl==1.9.2
+colorlog==6.7.0
+folium==0.14.0
+matplotlib==3.7.2
+seaborn==0.12.2
+atproto==0.0.31
+duckdb==0.8.1
+branca==0.6.0  # Required by folium for color scales
+osmnx==1.3.0  # For geocoding and boundary data
+geopandas==0.13.2  # For geographic data handling
+shapely==2.0.1  # For geometry operations
+selenium==4.11.2  # For web browser automation
+Pillow==10.0.0  # For image processing
+geopy==2.3.0  # For geocoding addresses
+APScheduler==3.10.4  # For production scheduling

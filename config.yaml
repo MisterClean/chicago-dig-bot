@@ -1,0 +1,113 @@
+# Chicago 811 Dig Bot Configuration
+
+# Test Mode Setting
+test_mode: false  # Set to false to enable posting to Bluesky
+
+# Data Collection Settings
+data:
+  # Directory for storing data files
+  data_dir: "data"
+  # Initial data source
+  initial_csv_path: "https://data.cityofchicago.org/api/views/gptz-y9ub/rows.csv"
+  # Chicago 811 SODA API configuration
+  soda_api:
+    url: "https://data.cityofchicago.org/resource/gptz-y9ub.json"
+    days_to_fetch: 30
+    records_limit: 50000
+    timeout: 60  # Timeout in seconds for API requests
+    app_token: "${CHICAGO_DATA_PORTAL_TOKEN}"  # Updated to match .env variable name
+    # Optional API parameters
+    params:
+      $order: "requestdate DESC"
+      $where: "requestdate > '${thirty_days_ago}'"
+
+# Database Settings
+database:
+  filename: "chicago811.db"
+  # Backup configuration
+  backup:
+    enabled: false
+    retention_days: 7
+    directory: "backups"
+
+# Analytics Settings
+analytics:
+  # Statistics calculation parameters
+  stats:
+    emergency_threshold_hours: 2
+    aggregation_period: "day"
+    rolling_window_days: 7    # For rolling averages
+    day_comparison:
+      min_history_days: 14    # Minimum days of history needed for day-of-week comparison
+      exclude_holidays: true  # Whether to exclude holidays from historical averages
+
+# Visualization Settings
+visualization:
+  chart:
+    filename: "daily_chart.png"
+    style:
+      figure_size: [12, 6]
+      dpi: 100
+      theme: "darkgrid"  # Changed to a valid Seaborn theme
+    colors:
+      emergency: "#FF4B4B"
+      regular: "#4B7BFF"
+    title_format: "Chicago 811 Dig Tickets - Last {days} Days"
+  heatmap:
+    output_dir: "output"
+    emergency_filename: "emergency_heatmap.html"
+    style:
+      zoom_start: 11
+      radius: 15
+      blur: 20
+      max_zoom: 13
+    colors:
+      regular_gradient: ["blue", "lime", "red"]
+      emergency_gradient: ["yellow", "orange", "red"]
+
+# Social Media Settings
+social:
+  bluesky:
+    # Credentials should be set as environment variables
+    username: "${BLUESKY_HANDLE}"  # Updated to match .env variable name
+    password: "${BLUESKY_PASSWORD}"
+    # Thread post templates
+    thread_templates:
+      summary: |
+        📊 Chicago Dig Report - {day_name}
+
+        Total Permits: {actual_total} ({diff_symbol}{total_diff_percent}% vs avg)
+        Emergency Permits: {actual_emergency} ({diff_symbol}{emergency_diff_percent}% vs avg)
+        
+        #ChicagoDigs #Infrastructure
+      
+      leaderboard: |
+        🏆 Today's Top Diggers
+
+        {leaderboard_entries}
+      
+      permits: |
+        📍 Total Permits: {total_count}
+
+        Emergency Permits: {emergency_count} {emergency_diff_symbol}{emergency_diff_percent}% vs {day_name} avg
+
+        Regular Permits: {regular_count} {regular_diff_symbol}{regular_diff_percent}% vs {day_name} avg
+
+# Logging Configuration
+logging:
+  level: "INFO"  # Restored to original INFO level
+  file: "chicago811.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  rotation:
+    max_bytes: 1048576  # 1MB
+    backup_count: 5
+
+# Error Handling
+errors:
+  retry:
+    max_attempts: 3
+    delay_seconds: 60
+    exponential_backoff: true
+  notifications:
+    enabled: true
+    error_threshold: 3  # Number of errors before notification
