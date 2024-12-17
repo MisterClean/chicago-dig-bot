@@ -63,12 +63,13 @@ def format_post_text(permit, dig_location=None):
     base_text += f"🔧 {permit['work_type']}\n"
     
     # Calculate remaining characters for location field
-    end_text = f"📝 Permit #{permit['application_number']}"
+    permit_url = f"https://ipi.cityofchicago.org/Digger/DT/Index/{permit['application_number']}"
+    permit_text = f"📝 Permit #{permit['application_number']}"
     if permit['is_emergency']:
-        end_text += "\n🚨 Emergency Work"
+        permit_text += "\n🚨 Emergency Work"
     
     # Calculate available space for location
-    available_chars = BLUESKY_CHAR_LIMIT - len(base_text) - len(end_text)
+    available_chars = BLUESKY_CHAR_LIMIT - len(base_text) - len(permit_text)
     
     # If we have a dig location, try to add it
     if dig_location:
@@ -84,7 +85,13 @@ def format_post_text(permit, dig_location=None):
                 location_text = ""
         base_text += location_text
     
-    return base_text + end_text
+    full_text = base_text + permit_text
+    
+    return {
+        'text': full_text,
+        'link_text': f"#{permit['application_number']}",
+        'link_url': permit_url
+    }
 
 def get_random_permit_from_yesterday():
     """Get a random permit that started digging yesterday from parquet files."""
@@ -174,15 +181,17 @@ def main():
         logger.info(f"Successfully got street view image: {image_path}")
         
         # Format post text with character limit handling
-        post_text = format_post_text(permit, dig_location)
+        post_content = format_post_text(permit, dig_location)
         logger.info("Post text formatted:")
-        logger.info(post_text)
-        logger.info(f"Post length: {len(post_text)} characters")
+        logger.info(post_content['text'])
+        logger.info(f"Post length: {len(post_content['text'])} characters")
         
         # Post to Bluesky
         bluesky = BlueskyPoster()
         bluesky.post_thread([{
-            'text': post_text,
+            'text': post_content['text'],
+            'link_text': post_content['link_text'],
+            'link_url': post_content['link_url'],
             'image': image_path,
             'alt': f"Google Street View image of {permit['address']}"
         }])

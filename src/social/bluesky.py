@@ -9,6 +9,7 @@ import os
 import yaml
 from utils.logging import get_logger
 from dotenv import load_dotenv, find_dotenv
+from datetime import datetime, timezone
 
 # Load environment variables with override=True to ensure our values take precedence
 load_dotenv(override=True)
@@ -130,12 +131,79 @@ class BlueskyPoster:
             logger.error(error_msg)
             raise BlueskyPostError(error_msg)
 
+    def _create_post_with_link(self, text: str, link_text: str, link_url: str, image_path: Optional[str] = None, alt_text: Optional[str] = None) -> None:
+        """Create a post with a link and optional image.
+        
+        Args:
+            text: The full text of the post
+            link_text: The text that should be a clickable link
+            link_url: The URL the link should point to
+            image_path: Optional path to an image to include
+            alt_text: Optional alt text for the image
+        """
+        try:
+            # Find byte indices for the link text
+            byte_text = text.encode('utf-8')
+            text_pos = text.find(link_text)
+            
+            if text_pos == -1:
+                raise ValueError(f"Could not find '{link_text}' in text: {text}")
+                
+            # Calculate byte positions
+            byte_start = len(text[:text_pos].encode('utf-8'))
+            byte_end = byte_start + len(link_text.encode('utf-8'))
+            
+            # Create facet for the link
+            facets = [{
+                'index': {
+                    'byteStart': byte_start,
+                    'byteEnd': byte_end
+                },
+                'features': [{
+                    '$type': 'app.bsky.richtext.facet#link',
+                    'uri': link_url
+                }]
+            }]
+
+            # Create the post record
+            record = {
+                'text': text,
+                'facets': facets,
+                'createdAt': datetime.now(timezone.utc).isoformat(),
+                '$type': 'app.bsky.feed.post'
+            }
+
+            # Add image if provided
+            if image_path:
+                self._validate_image(image_path)
+                image_blob = self._upload_image(image_path)
+                record['embed'] = {
+                    "$type": "app.bsky.embed.images",
+                    "images": [{"alt": alt_text or "", "image": image_blob}]
+                }
+
+            # Create the post with proper data structure
+            data = {
+                'collection': 'app.bsky.feed.post',
+                'repo': self.client.me.did,
+                'record': record
+            }
+
+            # Send the post
+            self.client.com.atproto.repo.create_record(data=data)
+            logger.info("Successfully posted to Bluesky")
+
+        except Exception as e:
+            logger.error(f"Failed to post to Bluesky: {str(e)}")
+            raise BlueskyPostError(str(e))
+
     def post_thread(self, posts: List[Dict[str, str]]) -> None:
         """Post a thread of multiple posts to Bluesky.
         
         Args:
             posts: List of dictionaries containing post content and optional image paths.
                   Each dict should have 'text' key and optional 'image' and 'alt' keys.
+                  For posts with links, include 'link_text' and 'link_url'.
                   
         Raises:
             BlueskyPostError: If thread posting fails.
@@ -158,22 +226,31 @@ class BlueskyPoster:
                         if 'alt' in post:
                             logger.info(f"Alt text: {post['alt']}")
                 return
-                
+
             # Post the first post and get its reference
             first_post = posts[0]
-            if 'image' in first_post:
-                self._validate_image(first_post['image'])
-                image_blob = self._upload_image(first_post['image'])
-                root_post = self.client.send_post(
-                    text=first_post['text'],
-                    embed={"$type": "app.bsky.embed.images", "images": [{"alt": first_post.get('alt', ''), "image": image_blob}]}
+            if 'link_text' in first_post and 'link_url' in first_post:
+                record = self._create_post_with_link(
+                    first_post['text'],
+                    first_post['link_text'],
+                    first_post['link_url'],
+                    first_post.get('image'),
+                    first_post.get('alt', '')
                 )
             else:
-                root_post = self.client.send_post(text=first_post['text'])
+                if 'image' in first_post:
+                    self._validate_image(first_post['image'])
+                    image_blob = self._upload_image(first_post['image'])
+                    record = self.client.send_post(
+                        text=first_post['text'],
+                        embed={"$type": "app.bsky.embed.images", "images": [{"alt": first_post.get('alt', ''), "image": image_blob}]}
+                    )
+                else:
+                    record = self.client.send_post(text=first_post['text'])
                 
             root_ref = {
-                "uri": root_post.uri,
-                "cid": root_post.cid
+                "uri": record.uri,
+                "cid": record.cid
             }
             parent_ref = root_ref
             
@@ -188,24 +265,34 @@ class BlueskyPoster:
                     "parent": parent_ref
                 }
                 
-                if 'image' in post:
-                    self._validate_image(post['image'])
-                    image_blob = self._upload_image(post['image'])
-                    parent_post = self.client.send_post(
-                        text=post['text'],
-                        embed={"$type": "app.bsky.embed.images", "images": [{"alt": post.get('alt', ''), "image": image_blob}]},
-                        reply_to=reply_ref
+                if 'link_text' in post and 'link_url' in post:
+                    record = self._create_post_with_link(
+                        post['text'],
+                        post['link_text'],
+                        post['link_url'],
+                        post.get('image'),
+                        post.get('alt', ''),
+                        reply_ref
                     )
                 else:
-                    parent_post = self.client.send_post(
-                        text=post['text'],
-                        reply_to=reply_ref
-                    )
+                    if 'image' in post:
+                        self._validate_image(post['image'])
+                        image_blob = self._upload_image(post['image'])
+                        record = self.client.send_post(
+                            text=post['text'],
+                            embed={"$type": "app.bsky.embed.images", "images": [{"alt": post.get('alt', ''), "image": image_blob}]},
+                            reply_to=reply_ref
+                        )
+                    else:
+                        record = self.client.send_post(
+                            text=post['text'],
+                            reply_to=reply_ref
+                        )
                 
                 # Update parent reference for next post
                 parent_ref = {
-                    "uri": parent_post.uri,
-                    "cid": parent_post.cid
+                    "uri": record.uri,
+                    "cid": record.cid
                 }
                 
             logger.info("Thread posted successfully")
@@ -273,46 +360,3 @@ class BlueskyPoster:
             error_msg = f"Failed to post daily thread: {str(e)}"
             logger.error(error_msg)
             raise BlueskyPostError(error_msg)
-
-    def _make_post(self, text: str, image_path: Optional[str] = None, alt_text: Optional[str] = None) -> None:
-        """Helper method to post content with test mode support.
-        
-        Args:
-            text: Text content to post.
-            image_path: Optional path to image file.
-            alt_text: Optional alt text for image.
-            
-        Raises:
-            BlueskyPostError: If posting fails.
-        """
-        if os.getenv('TEST_MODE', 'false').lower() == 'true':
-            logger.info("TEST MODE: Simulating Bluesky post")
-            logger.info(f"Text:\n{text}")
-            if image_path:
-                logger.info(f"Image: {image_path}")
-                if alt_text:
-                    logger.info(f"Alt text: {alt_text}")
-        else:
-            try:
-                logger.info("Posting to Bluesky")
-                if image_path:
-                    logger.debug(f"Posting with image: {image_path}")
-                    image_blob = self._upload_image(image_path)
-                    self.client.send_post(
-                        text=text,
-                        embed={"$type": "app.bsky.embed.images", "images": [{"alt": alt_text or "", "image": image_blob}]}
-                    )
-                else:
-                    logger.debug("Posting text only")
-                    self.client.send_post(text=text)
-                    
-                logger.info("Successfully posted to Bluesky")
-                
-            except AtProtocolError as e:
-                error_msg = f"Bluesky API error: {str(e)}"
-                logger.error(error_msg)
-                raise BlueskyPostError(error_msg)
-            except Exception as e:
-                error_msg = f"Failed to post to Bluesky: {str(e)}"
-                logger.error(error_msg)
-                raise BlueskyPostError(error_msg)
