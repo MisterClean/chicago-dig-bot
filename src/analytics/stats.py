@@ -17,17 +17,13 @@ class StatsGenerationError(Exception):
 class StatsGenerator:
     """Handles generation of statistics and analytics from dig ticket data."""
     
-    # Common business suffixes to remove
+    # Common business suffixes to remove - removed leading \s+ to handle cases without spaces
     BUSINESS_SUFFIXES = [
-        r'\s+INC\.?',
-        r'\s+LLC\.?',
-        r'\s+CO\.?',
-        r'\s+CORP\.?',
-        r'\s+COMPANY\.?',
-        r'\s+CONSTRUCTION\.?',
-        r'\s+CONTRACTING\.?',
-        r'\s+CONTRACTORS\.?',
-        r'\s+LTD\.?',
+        r'(?:,\s+)?INC(?:ORPORATED)?\.?',
+        r'(?:,\s+)?LLC\.?',
+        r'(?:,\s+)?CO(?:MPANY)?\.?',
+        r'(?:,\s+)?CORP(?:ORATION)?\.?',
+        r'(?:,\s+)?LTD\.?',
     ]
     
     # Known name variations to normalize
@@ -47,6 +43,13 @@ class StatsGenerator:
         "CITY OF CHICAGO WATER DEPARTMENT": "Department of Water Management",
         "CITY OF CHICAGO (DEPT OF WATER MANAGEMENT)": "Department of Water Management",
         "CITY OF CHICAGO WATER DEPT": "Department of Water Management",
+        "CDOT - IN HOUSE CONSTRUCTION": "CDOT - In-House Construction",
+        "CDOT - IN-HOUSE CONSTRUCTION": "CDOT - In-House Construction",
+        "CDOT - INHOUSECONSTRUCTION": "CDOT - In-House Construction",
+        "CDOT-IN HOUSE CONSTRUCTION": "CDOT - In-House Construction",
+        "CDOT-INHOUSECONSTRUCTION": "CDOT - In-House Construction",
+        "CDOT-SIGN MANAGEMENT": "CDOT - Sign Management",
+        "CDOT - SIGN MANAGEMENT": "CDOT - Sign Management",
         
         # Construction Companies
         "SEVEN-D CONSTRUCTION": "Seven-D Construction",
@@ -55,6 +58,10 @@ class StatsGenerator:
         "M&J ASPHALT": "M&J Asphalt",
         "G & V CONST": "G&V Construction",
         "G&V CONST": "G&V Construction",
+        "RELIABLE CONTRACTING & EQUIPMENT": "Reliable Contracting & Equipment",
+        "RELIABLECONTRACTING&EQUIPMENT": "Reliable Contracting & Equipment",
+        "RELIABLE CONTRACTING AND EQUIPMENT": "Reliable Contracting & Equipment",
+        "MILLER PIPELINE": "Miller Pipeline",
     }
     
     # Words that should always be capitalized a certain way
@@ -71,13 +78,25 @@ class StatsGenerator:
         "INC": "Inc",
         "CO": "Co",
         "DEPT": "Dept",
+        "DBA": "dba",
     }
     
-    # Parenthetical suffixes to preserve
+    # Parenthetical suffixes to preserve - ordered by specificity
     PRESERVE_SUFFIXES = [
-        "(SL)",
-        "(SEAL)",
-        "(OVERSIZE)",
+        r'\(SL-\d+\)',  # Specific SL numbers
+        r'\(SL\)',      # Generic SL
+        r'\(SEAL\)',
+        r'\(OVERSIZE\)',
+    ]
+    
+    # Parenthetical suffixes to remove
+    REMOVE_SUFFIXES = [
+        r'\(HOMEOWNER\)',
+        r'\(CONSTRUCTION\)',
+        r'\(COMMERCIAL\)',
+        r'\(LESSEE\)',
+        r'\(LOT OWNER\)',
+        r'\(DWM CONTRACT\)',
     ]
     
     def __init__(self):
@@ -152,36 +171,46 @@ class StatsGenerator:
         name = re.sub(r'\*+$', '', name)
         name = name.replace('*', '')
         
-        # Normalize whitespace
+        # Normalize whitespace and remove trailing/leading spaces
         name = re.sub(r'\s+', ' ', name)
         name = name.strip()
         
-        # Check for known variations first
-        for pattern, replacement in self.NAME_MAPPINGS.items():
-            if name.startswith(pattern.upper()):
-                # If there's a parenthetical suffix to preserve, keep it
-                suffix = ''
-                for preserve in self.PRESERVE_SUFFIXES:
-                    if preserve.upper() in name:
-                        suffix = f" {preserve}"
-                        break
-                return f"{replacement}{suffix}"
-        
         # Extract any parenthetical suffixes to preserve
-        suffix = ''
-        for preserve in self.PRESERVE_SUFFIXES:
-            if preserve.upper() in name:
-                suffix = f" {preserve}"
-                name = name.replace(preserve.upper(), '')
+        preserved_suffix = ''
+        for suffix_pattern in self.PRESERVE_SUFFIXES:
+            match = re.search(suffix_pattern, name, re.IGNORECASE)
+            if match:
+                preserved_suffix = f" {match.group()}"
+                name = re.sub(suffix_pattern, '', name, flags=re.IGNORECASE)
                 break
+        
+        # Remove unwanted parenthetical suffixes
+        for suffix_pattern in self.REMOVE_SUFFIXES:
+            name = re.sub(suffix_pattern, '', name, flags=re.IGNORECASE)
+        
+        # Remove any remaining parenthetical expressions
+        name = re.sub(r'\([^)]+\)', '', name)
+        
+        # Check for known variations first
+        # Try exact match first
+        if name in self.NAME_MAPPINGS:
+            return f"{self.NAME_MAPPINGS[name]}{preserved_suffix}"
+            
+        # Then try normalized comparison (remove extra spaces, standardize separators)
+        normalized_input = re.sub(r'[-\s]+', ' ', name)
+        for pattern, replacement in self.NAME_MAPPINGS.items():
+            normalized_pattern = re.sub(r'[-\s]+', ' ', pattern.upper())
+            if normalized_input == normalized_pattern:
+                return f"{replacement}{preserved_suffix}"
         
         # Remove common business suffixes
         for suffix_pattern in self.BUSINESS_SUFFIXES:
             name = re.sub(suffix_pattern, '', name, flags=re.IGNORECASE)
         
-        # Normalize ampersands
-        name = name.replace(' & ', '&')
-        name = name.replace(' AND ', '&')
+        # Normalize ampersands and other conjunctions
+        name = name.replace(' AND ', ' & ')
+        name = name.replace('&', ' & ')  # Add spaces around ampersands
+        name = re.sub(r'\s+', ' ', name)  # Clean up any resulting double spaces
         
         # Split into words and apply specific capitalization rules
         words = name.split()
@@ -200,14 +229,19 @@ class StatsGenerator:
                     normalized_words.append(word.capitalize())
                 else:
                     normalized_words.append(self.WORD_CAPITALIZATIONS[word])
+            # Special case for hyphenated words
+            elif '-' in word:
+                parts = word.split('-')
+                normalized_parts = [p.capitalize() for p in parts]
+                normalized_words.append('-'.join(normalized_parts))
             else:
                 normalized_words.append(word.capitalize())
         
         name = ' '.join(normalized_words)
         
         # Add back any preserved suffix
-        if suffix:
-            name = f"{name}{suffix}"
+        if preserved_suffix:
+            name = f"{name}{preserved_suffix}"
         
         return name.strip()
             
@@ -225,8 +259,8 @@ class StatsGenerator:
             
         try:
             # Extract name and count using regex
-            # Looking for pattern like "{'': Name, '': count}" or "(Name,count)"
-            match = re.search(r"(?:\{'': |^\()([^,]+),\s*(?:'': |)(\d+)(?:\}|\))", record_str)
+            # Updated pattern to better handle special characters and asterisks
+            match = re.search(r"(?:\{'': |^\()([^,]+?)(?:\*+)?,\s*(?:'': |)(\d+)(?:\}|\))", record_str)
             if not match:
                 logger.warning(f"Failed to parse record '{record_str}': no match found")
                 return {}
