@@ -131,8 +131,8 @@ class BlueskyPoster:
             logger.error(error_msg)
             raise BlueskyPostError(error_msg)
 
-    def _create_post_with_link(self, text: str, link_text: str, link_url: str, image_path: Optional[str] = None, alt_text: Optional[str] = None) -> None:
-        """Create a post with a link and optional image.
+    def post_with_link(self, text: str, link_text: str, link_url: str, image_path: Optional[str] = None, alt_text: Optional[str] = None) -> None:
+        """Create a single post with a link and optional image.
         
         Args:
             text: The full text of the post
@@ -143,7 +143,6 @@ class BlueskyPoster:
         """
         try:
             # Find byte indices for the link text
-            byte_text = text.encode('utf-8')
             text_pos = text.find(link_text)
             
             if text_pos == -1:
@@ -230,13 +229,14 @@ class BlueskyPoster:
             # Post the first post and get its reference
             first_post = posts[0]
             if 'link_text' in first_post and 'link_url' in first_post:
-                record = self._create_post_with_link(
+                self.post_with_link(
                     first_post['text'],
                     first_post['link_text'],
                     first_post['link_url'],
                     first_post.get('image'),
                     first_post.get('alt', '')
                 )
+                return
             else:
                 if 'image' in first_post:
                     self._validate_image(first_post['image'])
@@ -266,7 +266,7 @@ class BlueskyPoster:
                 }
                 
                 if 'link_text' in post and 'link_url' in post:
-                    record = self._create_post_with_link(
+                    self.post_with_link(
                         post['text'],
                         post['link_text'],
                         post['link_url'],

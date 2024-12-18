@@ -188,13 +188,13 @@ def main():
         
         # Post to Bluesky
         bluesky = BlueskyPoster()
-        bluesky.post_thread([{
-            'text': post_content['text'],
-            'link_text': post_content['link_text'],
-            'link_url': post_content['link_url'],
-            'image': image_path,
-            'alt': f"Google Street View image of {permit['address']}"
-        }])
+        bluesky.post_with_link(
+            text=post_content['text'],
+            link_text=post_content['link_text'],
+            link_url=post_content['link_url'],
+            image_path=image_path,
+            alt_text=f"Google Street View image of {permit['address']}"
+        )
         
         logger.info("Successfully posted random permit")
         
