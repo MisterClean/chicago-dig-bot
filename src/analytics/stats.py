@@ -17,19 +17,34 @@ class StatsGenerationError(Exception):
 class StatsGenerator:
     """Handles generation of statistics and analytics from dig ticket data."""
     
-    # Common business suffixes to remove - removed leading \s+ to handle cases without spaces
-    BUSINESS_SUFFIXES = [
-        r'(?:,\s+)?INC(?:ORPORATED)?\.?',
-        r'(?:,\s+)?LLC\.?',
-        r'(?:,\s+)?CO(?:MPANY)?\.?',
-        r'(?:,\s+)?CORP(?:ORATION)?\.?',
-        r'(?:,\s+)?LTD\.?',
-    ]
+    # Common business suffixes to normalize
+    BUSINESS_SUFFIXES = {
+        r'(?:,\s+)?INC(?:ORPORATED)?\.?$': 'Inc',
+        r'(?:,\s+)?LLC\.?$': 'LLC',
+        r'(?:,\s+)?CO(?:MPANY)?\.?$': 'Co',
+        r'(?:,\s+)?CORP(?:ORATION)?\.?$': 'Corp',
+        r'(?:,\s+)?LTD\.?$': 'Ltd',
+    }
+    
+    # Common word replacements - ordered by specificity
+    WORD_REPLACEMENTS = {
+        r'CONSTRUCTION': 'Construction',
+        r'NSTRUCTION': 'Construction',
+        r'CONSTR\.?': 'Construction',
+        r'CONST\.?': 'Construction',
+        r'PLBG\.?': 'Plumbing',
+        r'HTG\.?': 'Heating',
+        r'EXCAV\.?': 'Excavating',
+        r'CONCRETE': 'Concrete',
+        r'NCRETE': 'Concrete',
+    }
     
     # Known name variations to normalize
     NAME_MAPPINGS = {
         # Utilities
         "PEOPLES GAS": "Peoples Gas",
+        "PEOPLE GAS": "Peoples Gas",
+        "PEOPLES GAS LIGHT & COKE": "Peoples Gas",
         "INTEGRYS ENERGY GROUP / PEOPLES GAS": "Peoples Gas",
         "INTEGRYS ENERGY GROUP/PEOPLE GAS": "Peoples Gas",
         "COMED NORTH": "ComEd",
@@ -43,6 +58,8 @@ class StatsGenerator:
         "CITY OF CHICAGO WATER DEPARTMENT": "Department of Water Management",
         "CITY OF CHICAGO (DEPT OF WATER MANAGEMENT)": "Department of Water Management",
         "CITY OF CHICAGO WATER DEPT": "Department of Water Management",
+        "CHICAGO DEPT WATER MANAGEMENT": "Department of Water Management",
+        "DEPT OF WATER MANAGEMENT": "Department of Water Management",
         "CDOT - IN HOUSE CONSTRUCTION": "CDOT - In-House Construction",
         "CDOT - IN-HOUSE CONSTRUCTION": "CDOT - In-House Construction",
         "CDOT - INHOUSECONSTRUCTION": "CDOT - In-House Construction",
@@ -203,14 +220,35 @@ class StatsGenerator:
             if normalized_input == normalized_pattern:
                 return f"{replacement}{preserved_suffix}"
         
-        # Remove common business suffixes
-        for suffix_pattern in self.BUSINESS_SUFFIXES:
-            name = re.sub(suffix_pattern, '', name, flags=re.IGNORECASE)
+        # Extract business suffix if present
+        business_suffix = ''
+        original_name = name  # Keep original for comparison
+        for suffix_pattern, replacement in self.BUSINESS_SUFFIXES.items():
+            match = re.search(suffix_pattern, name, re.IGNORECASE)
+            if match:
+                business_suffix = f" {replacement}"
+                name = re.sub(suffix_pattern, '', name, flags=re.IGNORECASE).strip()
+                break
         
         # Normalize ampersands and other conjunctions
         name = name.replace(' AND ', ' & ')
         name = name.replace('&', ' & ')  # Add spaces around ampersands
         name = re.sub(r'\s+', ' ', name)  # Clean up any resulting double spaces
+        
+        # Apply word replacements for common abbreviations
+        words = name.split()
+        normalized_words = []
+        for word in words:
+            # Check if the word matches any of our replacement patterns
+            replaced = False
+            for pattern, replacement in self.WORD_REPLACEMENTS.items():
+                if re.match(f"^{pattern}$", word):
+                    normalized_words.append(replacement)
+                    replaced = True
+                    break
+            if not replaced:
+                normalized_words.append(word)
+        name = ' '.join(normalized_words)
         
         # Split into words and apply specific capitalization rules
         words = name.split()
@@ -238,6 +276,11 @@ class StatsGenerator:
                 normalized_words.append(word.capitalize())
         
         name = ' '.join(normalized_words)
+        
+        # Only add back business suffix if it was present in original
+        if business_suffix and any(re.search(pattern, original_name, re.IGNORECASE) 
+                                 for pattern in self.BUSINESS_SUFFIXES.keys()):
+            name = f"{name}{business_suffix}"
         
         # Add back any preserved suffix
         if preserved_suffix:
