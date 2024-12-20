@@ -9,6 +9,7 @@ idna==3.4
 multidict==6.0.4
 numpy==1.25.2
 pandas==2.0.3
+pyarrow==12.0.1  # Explicitly defined for parquet operations
 python-dateutil==2.8.2
 pytz==2023.3
 requests==2.31.0
