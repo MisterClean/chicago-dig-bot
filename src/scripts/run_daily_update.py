@@ -76,7 +76,7 @@ def run_pipeline():
             logger.warning("No new records fetched, skipping remaining pipeline steps")
             return
         
-        if data.empty or 'ticket_number' not in data.columns:
+        if data.empty or 'dig_ticket_number' not in data.columns:
             raise DataValidationError("Fetched data is invalid or missing required columns")
             
         pipeline_status['fetch_success'] = True

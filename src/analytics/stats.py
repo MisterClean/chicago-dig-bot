@@ -343,7 +343,6 @@ class StatsGenerator:
             SELECT
                 COUNT(*) as total_permits,
                 SUM(CASE WHEN is_emergency::BOOLEAN THEN 1 ELSE 0 END) as emergency_permits,
-                COUNT(DISTINCT contact_last_name) as unique_contractors,
                 COUNT(DISTINCT street_name) as unique_streets
             FROM read_parquet('{str(config.data_dir)}/*.parquet')
             WHERE request_date::DATE = '{yesterday}'
@@ -358,7 +357,6 @@ class StatsGenerator:
                 'total_permits': int(result['total_permits'].iloc[0]),
                 'emergency_permits': int(result['emergency_permits'].iloc[0]),
                 'regular_permits': int(result['total_permits'].iloc[0] - result['emergency_permits'].iloc[0]),
-                'unique_contractors': int(result['unique_contractors'].iloc[0]),
                 'unique_streets': int(result['unique_streets'].iloc[0])
             }
             

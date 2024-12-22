@@ -96,7 +96,7 @@ def run_refresh():
             raise DataValidationError("No records fetched during full refresh")
         
         # Check for required columns using normalized names
-        required_columns = ['ticket_number', 'request_date', 'is_emergency']
+        required_columns = ['dig_ticket_number', 'request_date', 'is_emergency']
         missing_columns = [col for col in required_columns if col not in data.columns]
         if missing_columns:
             raise DataValidationError(f"Fetched data is missing required columns: {missing_columns}")

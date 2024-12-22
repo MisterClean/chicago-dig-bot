@@ -35,10 +35,9 @@ env/
 
 # Logs and databases
 *.log
-*.db
 *.sqlite3
 
 # Project specific
-data/
 logs/
 daily_chart.png
+cache/

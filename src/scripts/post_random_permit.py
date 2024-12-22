@@ -124,10 +124,11 @@ def get_random_permit_from_yesterday():
             
         # Pick a random permit
         permit = yesterday_permits.sample(n=1).iloc[0]
-        logger.info(f"Selected permit: {permit['ticket_number']}")
+        logger.info(f"Selected permit: {permit['dig_ticket_number']}")
         
         # Format address
-        address = f"{int(permit['street_number_from'])} {permit['street_direction']} {permit['street_name']} {permit['street_suffix']}, Chicago, IL"
+        suffix = f" {permit['street_suffix']}" if pd.notna(permit['street_suffix']) else ""
+        address = f"{int(permit['street_number_from'])} {permit['street_direction']} {permit['street_name']}{suffix}, Chicago, IL"
         logger.info(f"Formatted address: {address}")
         
         # Format work type (replace underscores with commas)
@@ -137,7 +138,7 @@ def get_random_permit_from_yesterday():
             work_type = "General Construction"
         
         return {
-            'application_number': permit['ticket_number'],
+            'application_number': permit['dig_ticket_number'],
             'work_type': work_type,
             'address': address,
             'is_emergency': permit['is_emergency']
