@@ -110,34 +110,102 @@ social:
 
 ## Setup
 
+### System Requirements
+
+The bot requires Ubuntu/Debian-based Linux with the following system dependencies:
+
+```bash
+# Update package list
+sudo apt update
+
+# Install Python and development tools
+sudo apt install -y python3 python3-venv python3-pip git
+
+# Install Chrome and dependencies for headless operation (required for visualizations)
+wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+sudo apt install -y ./google-chrome-stable_current_amd64.deb
+sudo apt install -y xvfb libgbm1
+rm google-chrome-stable_current_amd64.deb
+```
+
+### Project Setup
+
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/chicago-dig-bot.git
+git clone https://github.com/MisterClean/chicago-dig-bot.git
 cd chicago-dig-bot
 ```
 
-2. Install dependencies:
+2. Create and activate a Python virtual environment:
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+3. Install Python dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Set up environment variables:
+4. Create `.env` file with your credentials:
 ```bash
-cp .env.example .env
-# Edit .env with your credentials:
-# - CHICAGO_DATA_PORTAL_TOKEN
-# - BLUESKY_HANDLE
-# - BLUESKY_PASSWORD
+cat > .env << EOL
+# Bluesky credentials
+BLUESKY_HANDLE=your.handle.bsky.social
+BLUESKY_PASSWORD=your-password
+
+# Data Portal token
+CHICAGO_DATA_PORTAL_TOKEN=your-token
+
+# Google Maps
+GOOGLE_MAPS_API_KEY=your-api-key
+EOL
 ```
 
-4. Initialize the database:
+5. Initialize the database:
 ```bash
-python src/scripts/migrate_schema.py
+PYTHONPATH=$PYTHONPATH:src python src/scripts/init_duckdb.py
 ```
 
-5. Run initial data collection:
+6. Run initial data collection:
 ```bash
-python src/scripts/refresh_data.py
+PYTHONPATH=$PYTHONPATH:src python src/scripts/refresh_data.py
+```
+
+### Verify Installation
+
+Test each component to ensure everything is working:
+
+1. Test random permit posting:
+```bash
+PYTHONPATH=$PYTHONPATH:src python src/scripts/post_random_permit.py
+```
+
+2. Test daily update:
+```bash
+PYTHONPATH=$PYTHONPATH:src python src/scripts/run_daily_update.py
+```
+
+### Troubleshooting
+
+1. **ModuleNotFoundError**: Make sure PYTHONPATH includes the src directory:
+```bash
+PYTHONPATH=$PYTHONPATH:src python your_script.py
+```
+
+2. **Chrome/Selenium Issues**: If you encounter Chrome-related errors:
+```bash
+# Verify Chrome is installed
+google-chrome --version
+
+# Check/install additional dependencies
+sudo apt install -y xvfb libgbm1
+```
+
+3. **Database Issues**: If DuckDB errors occur:
+```bash
+# Reinitialize the database
+PYTHONPATH=$PYTHONPATH:src python src/scripts/init_duckdb.py
 ```
 
 ## Usage
@@ -145,7 +213,7 @@ python src/scripts/refresh_data.py
 ### Daily Updates
 Run the daily update script to fetch new data and post updates:
 ```bash
-python src/scripts/run_daily_update.py
+PYTHONPATH=$PYTHONPATH:src python src/scripts/run_daily_update.py
 ```
 
 This will:
@@ -175,19 +243,29 @@ module.exports = {
   apps: [{
     name: "chicago-dig-daily",
     script: "src/scripts/run_daily_update.py",
-    interpreter: "python3",
+    interpreter: "./venv/bin/python",
+    cwd: "/path/to/chicago-dig-bot",
+    env: {
+      PYTHONPATH: "src"
+    },
     cron_restart: "0 10 * * *",  // 10am daily
     autorestart: false
   },
   {
     name: "chicago-dig-roulette",
     script: "src/scripts/post_random_permit.py",
-    interpreter: "python3",
+    interpreter: "./venv/bin/python",
+    cwd: "/path/to/chicago-dig-bot",
+    env: {
+      PYTHONPATH: "src"
+    },
     cron_restart: "0 */3 * * *",  // Every 3 hours
     autorestart: false
   }]
 }
 ```
+
+Note: Replace `/path/to/chicago-dig-bot` with your actual project path.
 
 3. Start the processes:
 ```bash
