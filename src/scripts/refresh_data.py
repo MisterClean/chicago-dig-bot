@@ -5,10 +5,10 @@ import shutil
 from pathlib import Path
 import glob
 from functools import wraps
-from data.fetcher import DataFetcher
-from data.storage import DataStorage
-from utils.logging import setup_logging, get_logger
-from config import config
+from src.data.fetcher import DataFetcher
+from src.data.storage import DataStorage
+from src.utils.logging import setup_logging, get_logger
+from src.config import config
 
 logger = get_logger(__name__)
 

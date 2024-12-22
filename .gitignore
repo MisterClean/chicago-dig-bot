@@ -41,3 +41,9 @@ env/
 logs/
 daily_chart.png
 cache/
+
+# Database and data files
+*.db
+*.parquet
+data/*.db
+data/*.parquet
