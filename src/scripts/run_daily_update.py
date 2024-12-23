@@ -193,11 +193,15 @@ def main():
         # Run the pipeline
         run_pipeline()
         
+        # Exit successfully
+        sys.exit(0)
+        
     except Exception as e:
         logger.error(f"Fatal error in daily update: {str(e)}")
-        raise
+        sys.exit(1)
     finally:
         logger.info("Chicago Dig Bot daily update finished")
 
 if __name__ == "__main__":
+    import sys
     main()

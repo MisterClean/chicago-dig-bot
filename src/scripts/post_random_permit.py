@@ -1,6 +1,6 @@
 """Script to post a random permit's street view image to Bluesky."""
-import sys
 import os
+import sys
 from pathlib import Path
 
 # Set up the correct working directory
@@ -154,6 +154,8 @@ def get_random_permit_from_yesterday():
 def main():
     """Main function to post a random permit's street view image."""
     image_path = None
+    exit_code = 1  # Default to error unless we succeed
+    
     try:
         # Debug: Print environment variables
         logger.info(f"BLUESKY_HANDLE: {os.getenv('BLUESKY_HANDLE')}")
@@ -165,7 +167,7 @@ def main():
         permit = get_random_permit_from_yesterday()
         if not permit:
             logger.error("No permit found to post")
-            return
+            sys.exit(1)
             
         logger.info(f"Processing permit {permit['application_number']}")
         
@@ -179,7 +181,7 @@ def main():
         
         if not image_result or image_result.get('status') != 'success':
             logger.error("Failed to get street view image")
-            return
+            sys.exit(1)
             
         image_path = image_result['image_path']
         logger.info(f"Successfully got street view image: {image_path}")
@@ -201,6 +203,7 @@ def main():
         )
         
         logger.info("Successfully posted random permit")
+        exit_code = 0  # Success!
         
         # Clean up the temporary image file after successful post
         if image_path and os.path.exists(image_path):
@@ -215,6 +218,7 @@ def main():
         
     except Exception as e:
         logger.error(f"Error in post_random_permit: {str(e)}")
+        exit_code = 1
     finally:
         # Ensure cleanup happens even if post fails
         if image_path and os.path.exists(image_path):
@@ -232,6 +236,8 @@ def main():
                     logger.info("Cleaned up emergency heatmap in finally block")
             except Exception as e:
                 logger.error(f"Error cleaning up heatmap: {str(e)}")
+        
+        sys.exit(exit_code)
 
 if __name__ == "__main__":
     main()
