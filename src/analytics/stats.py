@@ -3,8 +3,8 @@ import pandas as pd
 import duckdb
 from typing import Dict, List, Optional
 from pathlib import Path
-from config import config
-from utils.logging import get_logger
+from src.config import config
+from src.utils.logging import get_logger
 import re
 from datetime import datetime, timedelta
 
