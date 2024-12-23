@@ -4,6 +4,7 @@ from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut
 import time
 from datetime import datetime
+import pytz
 import os
 from pathlib import Path
 from src.utils.logging import get_logger
@@ -62,7 +63,9 @@ class PropertyImageBot:
             if response.status_code == 200:
                 # Create filename from sanitized address
                 safe_address = "".join(x for x in address if x.isalnum() or x in (' ', '-', '_'))
-                filename = self.images_dir / f"{safe_address}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                chicago_tz = pytz.timezone('America/Chicago')
+                chicago_now = datetime.now(chicago_tz)
+                filename = self.images_dir / f"{safe_address}_{chicago_now.strftime('%Y%m%d_%H%M%S')}.jpg"
                 
                 with open(filename, 'wb') as f:
                     f.write(response.content)

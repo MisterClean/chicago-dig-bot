@@ -6,6 +6,7 @@ import pandas as pd
 import folium
 from folium.plugins import HeatMap
 from datetime import datetime, timedelta
+import pytz
 from pathlib import Path
 import matplotlib.dates as mdates
 from src.config import config
@@ -254,7 +255,9 @@ class ChartGenerator:
             self._validate_location_data(df)
             
             # Filter for permits from yesterday only
-            yesterday = datetime.now().date() - timedelta(days=1)
+            chicago_tz = pytz.timezone('America/Chicago')
+            chicago_now = datetime.now(chicago_tz)
+            yesterday = chicago_now.date() - timedelta(days=1)
             df = df[df['dig_date'].dt.date == yesterday]
             
             # Filter out invalid coordinates
@@ -338,7 +341,9 @@ class ChartGenerator:
                 raise ChartGenerationError("Missing 'is_emergency' column")
             
             # Filter for permits from yesterday only
-            yesterday = datetime.now().date() - timedelta(days=1)
+            chicago_tz = pytz.timezone('America/Chicago')
+            chicago_now = datetime.now(chicago_tz)
+            yesterday = chicago_now.date() - timedelta(days=1)
             df = df[df['dig_date'].dt.date == yesterday]
             
             # Filter out invalid coordinates

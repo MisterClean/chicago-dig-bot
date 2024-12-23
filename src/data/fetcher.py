@@ -2,6 +2,7 @@
 import os
 import json
 from datetime import datetime, timedelta
+import pytz
 import pandas as pd
 import requests
 from pathlib import Path
@@ -142,7 +143,9 @@ class DataFetcher:
         try:
             # Calculate date range
             days_to_fetch = config.soda_days_to_fetch
-            cutoff_date = datetime.now() - timedelta(days=days_to_fetch)
+            chicago_tz = pytz.timezone('America/Chicago')
+            chicago_now = datetime.now(chicago_tz)
+            cutoff_date = chicago_now - timedelta(days=days_to_fetch)
             
             # Prepare API parameters
             params = {
@@ -187,7 +190,7 @@ class DataFetcher:
         try:
             with open(self.last_fetch_file, 'w') as f:
                 json.dump({
-                    'last_fetch': datetime.now().isoformat()
+                    'last_fetch': datetime.now(pytz.timezone('America/Chicago')).isoformat()
                 }, f)
         except Exception as e:
             logger.warning(f"Failed to update last fetch time: {str(e)}")

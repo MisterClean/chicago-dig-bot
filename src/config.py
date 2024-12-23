@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import yaml
 from datetime import datetime, timedelta
+import pytz
 
 class Config:
     def __init__(self, config_path=None):
@@ -69,7 +70,9 @@ class Config:
         params = self._get_nested('data', 'soda_api', 'params')
         # Process any date-based parameters
         if params and 'where_clause' in params:
-            thirty_days_ago = (datetime.now() - timedelta(days=self.soda_days_to_fetch)).strftime('%Y-%m-%d')
+            chicago_tz = pytz.timezone('America/Chicago')
+            chicago_now = datetime.now(chicago_tz)
+            thirty_days_ago = (chicago_now - timedelta(days=self.soda_days_to_fetch)).strftime('%Y-%m-%d')
             params['where_clause'] = params['where_clause'].replace('${thirty_days_ago}', thirty_days_ago)
         return params
         

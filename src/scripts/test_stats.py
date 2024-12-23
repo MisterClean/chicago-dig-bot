@@ -2,6 +2,7 @@
 from analytics.stats import StatsGenerator
 from utils.logging import get_logger
 from datetime import datetime, timedelta
+import pytz
 import argparse
 
 logger = get_logger(__name__)
@@ -61,7 +62,9 @@ def main():
         stats = StatsGenerator()
         
         # Use provided date or default to yesterday
-        test_date = args.date if args.date else (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        chicago_tz = pytz.timezone('America/Chicago')
+        chicago_now = datetime.now(chicago_tz)
+        test_date = args.date if args.date else (chicago_now - timedelta(days=1)).strftime('%Y-%m-%d')
         
         print(f"\nAnalyzing data for: {test_date}")
         
