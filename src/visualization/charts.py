@@ -8,8 +8,8 @@ from folium.plugins import HeatMap
 from datetime import datetime, timedelta
 from pathlib import Path
 import matplotlib.dates as mdates
-from config import config
-from utils.logging import get_logger
+from src.config import config
+from src.utils.logging import get_logger
 import json
 import osmnx as ox
 import geopandas as gpd
