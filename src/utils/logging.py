@@ -4,7 +4,7 @@ import logging.handlers
 import os
 from pathlib import Path
 import colorlog
-from config import config
+from src.config import config
 
 def setup_logging():
     """Configure logging based on settings in config.yaml."""
