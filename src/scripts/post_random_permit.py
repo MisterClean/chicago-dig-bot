@@ -12,6 +12,7 @@ import pandas as pd
 import random
 import glob
 from datetime import datetime, timedelta
+import pytz
 import logging
 from src.utils.property_image import PropertyImageBot
 from src.social.bluesky import BlueskyPoster
@@ -96,8 +97,10 @@ def format_post_text(permit, dig_location=None):
 def get_random_permit_from_yesterday():
     """Get a random permit that started digging yesterday from parquet files."""
     try:
-        # Get yesterday's date
-        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        # Get yesterday's date in Chicago timezone
+        chicago_tz = pytz.timezone('America/Chicago')
+        chicago_now = datetime.now(chicago_tz)
+        yesterday = (chicago_now - timedelta(days=1)).strftime('%Y-%m-%d')
         logger.info(f"Looking for permits from {yesterday}")
         
         # Find latest parquet file

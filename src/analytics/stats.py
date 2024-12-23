@@ -7,6 +7,7 @@ from src.config import config
 from src.utils.logging import get_logger
 import re
 from datetime import datetime, timedelta
+import pytz
 
 logger = get_logger(__name__)
 
@@ -337,7 +338,9 @@ class StatsGenerator:
             logger.info("Generating daily statistics")
             self._validate_parquet_files()
             
-            yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+            chicago_tz = pytz.timezone('America/Chicago')
+            chicago_now = datetime.now(chicago_tz)
+            yesterday = (chicago_now - timedelta(days=1)).strftime('%Y-%m-%d')
             
             query = f"""
             SELECT
@@ -398,7 +401,9 @@ class StatsGenerator:
             day_of_week = date.strftime('%A')
             
             # Calculate the date range for historical comparison
-            today = datetime.now().strftime('%Y-%m-%d')
+            chicago_tz = pytz.timezone('America/Chicago')
+            chicago_now = datetime.now(chicago_tz)
+            today = chicago_now.strftime('%Y-%m-%d')
             rolling_window = config._get_nested('analytics', 'stats', 'rolling_window_days')
             start_date = (datetime.now() - timedelta(days=rolling_window)).strftime('%Y-%m-%d')
             
@@ -486,7 +491,9 @@ class StatsGenerator:
             logger.info(f"Generating contractor leaderboard (limit: {limit})")
             self._validate_parquet_files()
             
-            yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+            chicago_tz = pytz.timezone('America/Chicago')
+            chicago_now = datetime.now(chicago_tz)
+            yesterday = (chicago_now - timedelta(days=1)).strftime('%Y-%m-%d')
             
             query = f"""
             WITH contractor_stats AS (

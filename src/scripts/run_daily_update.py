@@ -2,6 +2,7 @@
 import time
 import logging
 from datetime import datetime, timedelta
+import pytz
 from functools import wraps
 from src.data.fetcher import DataFetcher
 from src.data.storage import DataStorage
@@ -108,8 +109,10 @@ def run_pipeline():
         logger.info("Generating statistics and comparisons")
         daily_stats = stats.generate_daily_stats()
         
-        # Use yesterday's date for comparisons
-        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        # Use yesterday's date for comparisons in Chicago timezone
+        chicago_tz = pytz.timezone('America/Chicago')
+        chicago_now = datetime.now(chicago_tz)
+        yesterday = (chicago_now - timedelta(days=1)).strftime('%Y-%m-%d')
         logger.info(f"Getting day comparison for yesterday: {yesterday}")
         day_comparison = stats.get_day_of_week_comparison(yesterday)
         leaderboard = stats.get_contractor_leaderboard(limit=5)
