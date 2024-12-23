@@ -5,8 +5,8 @@ from datetime import datetime, timedelta
 import pandas as pd
 import requests
 from pathlib import Path
-from utils.logging import get_logger
-from config import config
+from src.utils.logging import get_logger
+from src.config import config
 
 logger = get_logger(__name__)
 

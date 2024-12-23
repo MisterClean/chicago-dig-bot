@@ -7,7 +7,7 @@ from pathlib import Path
 import time
 import os
 import yaml
-from utils.logging import get_logger
+from src.utils.logging import get_logger
 from dotenv import load_dotenv, find_dotenv
 from datetime import datetime, timezone
 

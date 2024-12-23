@@ -6,7 +6,7 @@ import time
 from datetime import datetime
 import os
 from pathlib import Path
-from utils.logging import get_logger
+from src.utils.logging import get_logger
 from dotenv import load_dotenv
 
 # Load environment variables
