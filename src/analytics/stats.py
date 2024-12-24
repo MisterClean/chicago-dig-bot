@@ -342,6 +342,27 @@ class StatsGenerator:
             chicago_now = datetime.now(chicago_tz)
             yesterday = (chicago_now - timedelta(days=1)).strftime('%Y-%m-%d')
             
+            # First check if we have any data for yesterday
+            check_query = f"""
+            SELECT COUNT(*) as record_count
+            FROM read_parquet('{str(config.data_dir)}/*.parquet')
+            WHERE request_date::DATE = '{yesterday}'
+            """
+            
+            check_result = self._execute_query(check_query)
+            record_count = int(check_result['record_count'].iloc[0])
+            
+            if record_count == 0:
+                logger.warning(f"No records found for date {yesterday}")
+                # Return zeros for all stats when no data is found
+                return {
+                    'total_permits': 0,
+                    'emergency_permits': 0,
+                    'regular_permits': 0,
+                    'unique_streets': 0
+                }
+            
+            # If we have data, proceed with the full query
             query = f"""
             SELECT
                 COUNT(*) as total_permits,
@@ -356,11 +377,17 @@ class StatsGenerator:
             if result.empty:
                 raise StatsGenerationError("No data found for daily statistics")
             
+            # Handle potential NaN values by using fillna(0) before converting to int
+            # Get the values and handle NaN before arithmetic
+            total_permits = result['total_permits'].iloc[0].fillna(0)
+            emergency_permits = result['emergency_permits'].iloc[0].fillna(0)
+            unique_streets = result['unique_streets'].iloc[0].fillna(0)
+            
             stats = {
-                'total_permits': int(result['total_permits'].iloc[0]),
-                'emergency_permits': int(result['emergency_permits'].iloc[0]),
-                'regular_permits': int(result['total_permits'].iloc[0] - result['emergency_permits'].iloc[0]),
-                'unique_streets': int(result['unique_streets'].iloc[0])
+                'total_permits': int(total_permits),
+                'emergency_permits': int(emergency_permits),
+                'regular_permits': int(total_permits - emergency_permits),
+                'unique_streets': int(unique_streets)
             }
             
             logger.info("Daily statistics generated successfully")
