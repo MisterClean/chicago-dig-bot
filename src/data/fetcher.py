@@ -79,11 +79,15 @@ class DataFetcher:
         rename_map = {old: new for old, new in column_map.items() if old in existing_columns}
         df = df.rename(columns=rename_map)
         
-        # Convert date columns
+        # Convert date columns with Chicago timezone
+        chicago_tz = pytz.timezone('America/Chicago')
         date_columns = ['request_date', 'dig_date', 'expiration_date']
         for col in date_columns:
             if col in df.columns:
-                df[col] = pd.to_datetime(df[col], errors='coerce')
+                # Convert to datetime and localize to Chicago timezone
+                df[col] = pd.to_datetime(df[col], errors='coerce').apply(
+                    lambda x: x.tz_localize(chicago_tz) if pd.notnull(x) else None
+                )
         
         # Convert emergency to boolean
         if 'is_emergency' in df.columns:

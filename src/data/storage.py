@@ -146,7 +146,9 @@ class DataStorage:
                 insert_df = new_records.copy()
                 for col in ['request_date', 'dig_date', 'expiration_date']:
                     if col in insert_df.columns:
-                        insert_df[col] = insert_df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
+                        insert_df[col] = insert_df[col].apply(
+                            lambda x: x.strftime('%Y-%m-%d %H:%M:%S') if pd.notnull(x) and isinstance(x, (pd.Timestamp, datetime)) else None
+                        )
 
                 # Convert DataFrame to list of tuples for insertion
                 records_to_insert = insert_df[[
@@ -282,11 +284,13 @@ class DataStorage:
             # Connect to DuckDB
             conn = duckdb.connect(str(self.db_path))
 
-            # Convert timestamps to strings
+            # Convert timestamps to strings with proper null handling
             df_copy = df.copy()
             for col in ['request_date', 'dig_date', 'expiration_date']:
                 if col in df_copy.columns:
-                    df_copy[col] = df_copy[col].dt.strftime('%Y-%m-%d %H:%M:%S')
+                    df_copy[col] = df_copy[col].apply(
+                        lambda x: x.strftime('%Y-%m-%d %H:%M:%S') if pd.notnull(x) and isinstance(x, (pd.Timestamp, datetime)) else None
+                    )
 
             # (Optionally) Drop table if it still exists
             conn.execute("DROP TABLE IF EXISTS permits")
