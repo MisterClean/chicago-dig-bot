@@ -239,8 +239,9 @@ class DataStorage:
         try:
             conn = duckdb.connect(str(self.db_path))
             conn.execute("DROP TABLE IF EXISTS permits")
+            conn.execute("DROP INDEX IF EXISTS idx_dig_date")
             conn.close()
-            logger.info("Dropped 'permits' table for a true full refresh.")
+            logger.info("Dropped 'permits' table and indexes for a true full refresh.")
         except Exception as e:
             logger.error(f"Error dropping permits table: {str(e)}")
             raise
@@ -294,8 +295,8 @@ class DataStorage:
                 FROM temp_df
             """)
 
-            # (Optional) Create an index on dig_date for faster queries
-            conn.execute("CREATE INDEX idx_dig_date ON permits(dig_date)")
+            # Create an index on dig_date for faster queries
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_dig_date ON permits(dig_date)")
 
             # (Optional) If you need a PRIMARY KEY, you can do:
             # DuckDB doesn’t fully support “ALTER TABLE ... ADD PRIMARY KEY” as of now,
