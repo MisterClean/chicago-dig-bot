@@ -289,30 +289,91 @@ pm2 logs  # View logs
 pm2 monit # Monitor CPU/Memory usage
 ```
 
-## Data Pipeline
+## Data Architecture
 
-The bot follows this daily workflow:
+The bot uses a robust data pipeline architecture to collect, store, and analyze Chicago 811 dig ticket data:
 
-1. **Data Collection**
-   - Fetches new dig tickets from Chicago's data portal
-   - Validates and processes new data
-   - Updates local database
+### Data Sources
+- **Chicago Data Portal**
+  - Full dataset via CSV endpoint (initial load)
+  - Recent updates via SODA API (daily updates)
+  - Configurable fetch window with overlap for late-arriving tickets
 
-2. **Analysis**
-   - Generates daily statistics
-   - Compares to historical averages
-   - Updates contractor leaderboards
-   - Identifies geographic patterns
+### Data Pipeline Components
 
-3. **Visualization**
-   - Creates updated heatmaps
-   - Generates statistical charts
-   - Prepares visual comparisons
+1. **Data Acquisition (DataFetcher)**
+   - Fetches data from Chicago Data Portal
+   - Handles both CSV and SODA API endpoints
+   - Normalizes column names and data types
+   - Validates data completeness
+   - Tracks fetch history and handles no-data scenarios
 
-4. **Social Updates**
-   - Composes daily summary thread
-   - Uploads visualizations
-   - Posts updates to Bluesky
+2. **Data Storage (DataStorage)**
+   - Dual storage strategy:
+     - DuckDB for fast querying and analysis
+     - Parquet files for data snapshots
+   - Schema validation and enforcement
+   - Efficient bulk operations
+   - Handles both new records and updates
+
+3. **Pipeline Orchestration (refresh_data)**
+   - Manages full data refresh workflow
+   - Implements retry logic with exponential backoff
+   - Validates data quality and completeness
+   - Ensures atomic operations
+   - Maintains detailed logging
+
+```mermaid
+graph TD
+    A[Chicago Data Portal] -->|CSV/SODA API| B[DataFetcher]
+    B -->|Normalized Data| C[DataStorage]
+    C -->|DuckDB| D[(Primary Database)]
+    C -->|Parquet| E[(Snapshot Files)]
+    D -->|Query| F[Analytics]
+    D -->|Query| G[Visualization]
+    F --> H[Social Posts]
+    G --> H
+    
+    subgraph "Data Pipeline"
+        B
+        C
+        D
+        E
+    end
+    
+    subgraph "Output Layer"
+        F
+        G
+        H
+    end
+```
+
+### Key Features
+
+1. **Robust Data Collection**
+   - Configurable fetch windows
+   - Overlap period for late-arriving tickets
+   - Data validation and normalization
+   - Error handling with retries
+
+2. **Efficient Storage**
+   - Fast querying with DuckDB
+   - Data snapshots in Parquet
+   - Schema enforcement
+   - Optimized indexes
+
+3. **Pipeline Reliability**
+   - Atomic operations
+   - Data validation checks
+   - Detailed logging
+   - Error recovery
+   - State tracking
+
+4. **Analysis & Output**
+   - Statistical analysis
+   - Geographic visualization
+   - Social media integration
+   - Daily insights generation
 
 ## Contributing
 
