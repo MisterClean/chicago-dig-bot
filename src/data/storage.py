@@ -170,11 +170,14 @@ class DataStorage:
             # Update existing records
             if not existing_records.empty:
                 for _, record in existing_records.iterrows():
-                    # Convert timestamps to strings
+                    # Convert timestamps to strings, handling null values
                     update_record = record.copy()
                     for col in ['request_date', 'dig_date', 'expiration_date']:
-                        if pd.notnull(update_record[col]):
-                            update_record[col] = update_record[col].strftime('%Y-%m-%d %H:%M:%S')
+                        if col in update_record and update_record[col] is not None:
+                            if isinstance(update_record[col], (pd.Timestamp, datetime)):
+                                update_record[col] = update_record[col].strftime('%Y-%m-%d %H:%M:%S')
+                            elif pd.isna(update_record[col]):
+                                update_record[col] = None
 
                     conn.execute("""
                         UPDATE permits 
