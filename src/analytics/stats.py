@@ -377,11 +377,10 @@ class StatsGenerator:
             if result.empty:
                 raise StatsGenerationError("No data found for daily statistics")
             
-            # Handle potential NaN values by using fillna(0) before converting to int
-            # Get the values and handle NaN before arithmetic
-            total_permits = result['total_permits'].iloc[0].fillna(0)
-            emergency_permits = result['emergency_permits'].iloc[0].fillna(0)
-            unique_streets = result['unique_streets'].iloc[0].fillna(0)
+            # Get the values, they're already integers from the COUNT/SUM
+            total_permits = result['total_permits'].iloc[0]
+            emergency_permits = result['emergency_permits'].iloc[0]
+            unique_streets = result['unique_streets'].iloc[0]
             
             stats = {
                 'total_permits': int(total_permits),

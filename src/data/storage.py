@@ -1,6 +1,5 @@
 """Module for storing and managing Chicago 811 dig permit data."""
-import os
-import sqlite3
+import duckdb
 from datetime import datetime
 import pandas as pd
 from pathlib import Path
@@ -10,7 +9,7 @@ from src.config import config
 logger = get_logger(__name__)
 
 class DataStorage:
-    """Handles storage and retrieval of dig permit data in SQLite and Parquet formats."""
+    """Handles storage and retrieval of dig permit data in DuckDB and Parquet formats."""
     
     def __init__(self):
         """Initialize the DataStorage with configuration."""
@@ -24,49 +23,52 @@ class DataStorage:
         self._init_database()
     
     def _init_database(self):
-        """Initialize the SQLite database schema if it doesn't exist."""
+        """Initialize the DuckDB database schema if it doesn't exist."""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                
-                # Create permits table if it doesn't exist
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS permits (
-                        dig_ticket_number TEXT PRIMARY KEY,
-                        permit_number TEXT,
-                        request_date TIMESTAMP,
-                        dig_date TIMESTAMP,
-                        expiration_date TIMESTAMP,
-                        is_emergency BOOLEAN,
-                        street_name TEXT,
-                        street_direction TEXT,
-                        street_number_from INTEGER,
-                        street_number_to INTEGER,
-                        street_suffix TEXT,
-                        dig_location TEXT,
-                        latitude REAL,
-                        longitude REAL,
-                        contact_first_name TEXT,
-                        contact_last_name TEXT,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
-                
-                # Create index on dig_date for efficient querying
-                cursor.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_dig_date 
-                    ON permits(dig_date)
-                """)
-                
-                conn.commit()
-                
+            conn = duckdb.connect(str(self.db_path))
+            
+            # Create permits table if it doesn't exist
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS permits (
+                    dig_ticket_number VARCHAR PRIMARY KEY,
+                    permit_number VARCHAR,
+                    request_date TIMESTAMP,
+                    dig_date TIMESTAMP,
+                    expiration_date TIMESTAMP,
+                    is_emergency BOOLEAN,
+                    street_name VARCHAR,
+                    street_direction VARCHAR,
+                    street_number_from INTEGER,
+                    street_number_to INTEGER,
+                    street_suffix VARCHAR,
+                    dig_location VARCHAR,
+                    latitude DOUBLE,
+                    longitude DOUBLE,
+                    contact_first_name VARCHAR,
+                    contact_last_name VARCHAR,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Create index on dig_date for efficient querying
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_dig_date 
+                ON permits(dig_date)
+            """)
+            
+            conn.close()
+            
         except Exception as e:
             logger.error(f"Error initializing database: {str(e)}")
             raise
     
     def _save_to_parquet(self, df):
         """Save DataFrame to a single parquet file."""
+        if df.empty:
+            logger.info("No data to save to parquet.")
+            return
+        
         try:
             # Create parquet filename
             parquet_path = self.data_dir / "chicago811_permits.parquet"
@@ -77,7 +79,6 @@ class DataStorage:
                 compression='snappy',
                 index=False
             )
-            
             logger.info(f"Saved {len(df)} records to {parquet_path}")
             
         except Exception as e:
@@ -85,8 +86,17 @@ class DataStorage:
             raise
     
     def process_and_store(self, df):
-        """Process and store permit data in both SQLite and Parquet formats."""
+        """Process and store permit data in both DuckDB and Parquet formats."""
         logger.info("Processing and storing permit data")
+        
+        # If no data is passed, log and return gracefully
+        if df.empty:
+            logger.warning("Received empty DataFrame — no new data to process.")
+            return {
+                'total_records': 0,
+                'inserts': 0,
+                'updates': 0
+            }
         
         try:
             # Track statistics
@@ -112,86 +122,92 @@ class DataStorage:
                     df[col] = None
             
             # Connect to database
-            with sqlite3.connect(self.db_path) as conn:
-                # Get existing ticket numbers
-                existing_tickets = pd.read_sql(
-                    "SELECT dig_ticket_number FROM permits",
-                    conn
-                )['dig_ticket_number'].tolist()
-                
-                # Split into new and existing records
-                new_records = df[~df['dig_ticket_number'].isin(existing_tickets)]
-                existing_records = df[df['dig_ticket_number'].isin(existing_tickets)]
-                
-                # Insert new records
-                if not new_records.empty:
-                    # Convert timestamps to strings for SQLite
-                    for col in ['request_date', 'dig_date', 'expiration_date']:
-                        new_records[col] = new_records[col].dt.strftime('%Y-%m-%d %H:%M:%S')
-                    
-                    # Convert boolean to integer for SQLite
-                    new_records['is_emergency'] = new_records['is_emergency'].astype(int)
-                    
-                    new_records.to_sql(
-                        'permits',
-                        conn,
-                        if_exists='append',
-                        index=False
-                    )
-                    stats['inserts'] = len(new_records)
-                    logger.info(f"Inserted {stats['inserts']} new records")
-                
-                # Update existing records
-                if not existing_records.empty:
-                    for _, record in existing_records.iterrows():
-                        # Convert timestamps to strings for SQLite
-                        params = (
-                            str(record['permit_number']) if pd.notna(record['permit_number']) else None,
-                            record['request_date'].strftime('%Y-%m-%d %H:%M:%S') if pd.notna(record['request_date']) else None,
-                            record['dig_date'].strftime('%Y-%m-%d %H:%M:%S') if pd.notna(record['dig_date']) else None,
-                            record['expiration_date'].strftime('%Y-%m-%d %H:%M:%S') if pd.notna(record['expiration_date']) else None,
-                            int(bool(record['is_emergency'])) if pd.notna(record['is_emergency']) else None,
-                            str(record['street_name']) if pd.notna(record['street_name']) else None,
-                            str(record['street_direction']) if pd.notna(record['street_direction']) else None,
-                            int(record['street_number_from']) if pd.notna(record['street_number_from']) else None,
-                            int(record['street_number_to']) if pd.notna(record['street_number_to']) else None,
-                            str(record['street_suffix']) if pd.notna(record['street_suffix']) else None,
-                            str(record['dig_location']) if pd.notna(record['dig_location']) else None,
-                            float(record['latitude']) if pd.notna(record['latitude']) else None,
-                            float(record['longitude']) if pd.notna(record['longitude']) else None,
-                            str(record['contact_first_name']) if pd.notna(record['contact_first_name']) else None,
-                            str(record['contact_last_name']) if pd.notna(record['contact_last_name']) else None,
-                            str(record['dig_ticket_number'])
-                        )
-                        
-                        conn.execute("""
-                            UPDATE permits 
-                            SET 
-                                permit_number = ?,
-                                request_date = ?,
-                                dig_date = ?,
-                                expiration_date = ?,
-                                is_emergency = ?,
-                                street_name = ?,
-                                street_direction = ?,
-                                street_number_from = ?,
-                                street_number_to = ?,
-                                street_suffix = ?,
-                                dig_location = ?,
-                                latitude = ?,
-                                longitude = ?,
-                                contact_first_name = ?,
-                                contact_last_name = ?,
-                                updated_at = CURRENT_TIMESTAMP
-                            WHERE dig_ticket_number = ?
-                        """, params)
-                    
-                    stats['updates'] = len(existing_records)
-                    logger.info(f"Updated {stats['updates']} existing records")
-                
-                conn.commit()
+            conn = duckdb.connect(str(self.db_path))
             
-            # Save all data to a single parquet file
+            # Get existing ticket numbers
+            existing_tickets_query = "SELECT dig_ticket_number FROM permits"
+            existing_tickets = []
+            try:
+                existing_tickets = conn.execute(existing_tickets_query).fetchdf()['dig_ticket_number'].tolist()
+            except duckdb.BinderException:
+                # If the table doesn't exist, it means a fresh DB
+                logger.info("No existing 'permits' table found; proceeding with initial load.")
+            
+            # Split into new and existing records
+            new_records = df[~df['dig_ticket_number'].isin(existing_tickets)]
+            existing_records = df[df['dig_ticket_number'].isin(existing_tickets)]
+            
+            # Insert new records
+            if not new_records.empty:
+                # Convert DataFrame to list of tuples for insertion
+                records_to_insert = new_records[[
+                    'dig_ticket_number', 'permit_number', 'request_date', 'dig_date',
+                    'expiration_date', 'is_emergency', 'street_name', 'street_direction',
+                    'street_number_from', 'street_number_to', 'street_suffix', 'dig_location',
+                    'latitude', 'longitude', 'contact_first_name', 'contact_last_name'
+                ]].values.tolist()
+                
+                conn.executemany("""
+                    INSERT INTO permits (
+                        dig_ticket_number, permit_number, request_date, dig_date,
+                        expiration_date, is_emergency, street_name, street_direction,
+                        street_number_from, street_number_to, street_suffix, dig_location,
+                        latitude, longitude, contact_first_name, contact_last_name
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, records_to_insert)
+                stats['inserts'] = len(new_records)
+                logger.info(f"Inserted {stats['inserts']} new records")
+            
+            # Update existing records
+            if not existing_records.empty:
+                for _, record in existing_records.iterrows():
+                    conn.execute("""
+                        UPDATE permits 
+                        SET 
+                            permit_number = ?,
+                            request_date = ?,
+                            dig_date = ?,
+                            expiration_date = ?,
+                            is_emergency = ?,
+                            street_name = ?,
+                            street_direction = ?,
+                            street_number_from = ?,
+                            street_number_to = ?,
+                            street_suffix = ?,
+                            dig_location = ?,
+                            latitude = ?,
+                            longitude = ?,
+                            contact_first_name = ?,
+                            contact_last_name = ?,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE dig_ticket_number = ?
+                    """, [
+                        record['permit_number'],
+                        record['request_date'],
+                        record['dig_date'],
+                        record['expiration_date'],
+                        record['is_emergency'],
+                        record['street_name'],
+                        record['street_direction'],
+                        record['street_number_from'],
+                        record['street_number_to'],
+                        record['street_suffix'],
+                        record['dig_location'],
+                        record['latitude'],
+                        record['longitude'],
+                        record['contact_first_name'],
+                        record['contact_last_name'],
+                        record['dig_ticket_number']
+                    ])
+                
+                stats['updates'] = len(existing_records)
+                logger.info(f"Updated {stats['updates']} existing records")
+            
+            conn.close()
+            
+            # Save all data (new + existing) to a single parquet file
+            # You might want to re-query the entire table or just use df combined with prior data
+            # For simplicity, we’ll just save `df` here.
             self._save_to_parquet(df)
             
             return stats
@@ -203,21 +219,104 @@ class DataStorage:
     def get_recent_permits(self, days=30):
         """Get permits from the last N days."""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                query = f"""
-                    SELECT * FROM permits 
-                    WHERE dig_date >= date('now', '-{days} days')
-                    ORDER BY dig_date DESC
-                """
-                df = pd.read_sql(query, conn)
-                
-                # Convert date columns
-                date_columns = ['request_date', 'dig_date', 'expiration_date', 'created_at', 'updated_at']
-                for col in date_columns:
-                    df[col] = pd.to_datetime(df[col])
-                
-                return df
+            conn = duckdb.connect(str(self.db_path))
+            query = f"""
+                SELECT * FROM permits 
+                WHERE dig_date >= CURRENT_DATE - INTERVAL '{days} days'
+                ORDER BY dig_date DESC
+            """
+            df = conn.execute(query).fetchdf()
+            conn.close()
+            
+            return df
                 
         except Exception as e:
             logger.error(f"Error getting recent permits: {str(e)}")
+            raise
+
+    def drop_permits_table(self):
+        """Remove the permits table for a true full refresh."""
+        try:
+            conn = duckdb.connect(str(self.db_path))
+            conn.execute("DROP TABLE IF EXISTS permits")
+            conn.close()
+            logger.info("Dropped 'permits' table for a true full refresh.")
+        except Exception as e:
+            logger.error(f"Error dropping permits table: {str(e)}")
+            raise
+
+    def store_full_data(self, df: pd.DataFrame) -> dict:
+        """
+        Create the 'permits' table in one bulk operation directly from the DataFrame.
+        Returns a dictionary with stats about the load.
+        """
+        logger.info("Storing full data in one bulk operation")
+
+        if df.empty:
+            logger.warning("DataFrame is empty. Nothing to store.")
+            return {
+                "total_records": 0,
+                "message": "No data"
+            }
+
+        try:
+            # Connect to DuckDB
+            conn = duckdb.connect(str(self.db_path))
+
+            # (Optionally) Drop table if it still exists
+            conn.execute("DROP TABLE IF EXISTS permits")
+
+            # Register the DataFrame as a DuckDB virtual table
+            conn.register("temp_df", df)
+
+            # Create the table in one statement from the DataFrame
+            conn.execute("""
+                CREATE TABLE permits AS
+                SELECT
+                    dig_ticket_number,
+                    permit_number,
+                    request_date,
+                    dig_date,
+                    expiration_date,
+                    is_emergency,
+                    street_name,
+                    street_direction,
+                    street_number_from,
+                    street_number_to,
+                    street_suffix,
+                    dig_location,
+                    latitude,
+                    longitude,
+                    contact_first_name,
+                    contact_last_name,
+                    CURRENT_TIMESTAMP as created_at,
+                    CURRENT_TIMESTAMP as updated_at
+                FROM temp_df
+            """)
+
+            # (Optional) Create an index on dig_date for faster queries
+            conn.execute("CREATE INDEX idx_dig_date ON permits(dig_date)")
+
+            # (Optional) If you need a PRIMARY KEY, you can do:
+            # DuckDB doesn’t fully support “ALTER TABLE ... ADD PRIMARY KEY” as of now,
+            # but you can add a UNIQUE constraint:
+            # conn.execute("ALTER TABLE permits ADD CONSTRAINT unique_dig_ticket UNIQUE (dig_ticket_number)")
+
+            # Count how many rows are in the new table
+            result = conn.execute("SELECT COUNT(*) as cnt FROM permits").fetchone()
+            total_records = result[0]
+
+            # Close connection
+            conn.close()
+
+            # (Optional) Save to Parquet if you want a file-based snapshot
+            # self._save_to_parquet(df)
+
+            logger.info(f"Bulk insert complete: {total_records} records in 'permits' table.")
+            return {
+                "total_records": total_records
+            }
+
+        except Exception as e:
+            logger.error(f"Error storing full data in bulk: {str(e)}")
             raise

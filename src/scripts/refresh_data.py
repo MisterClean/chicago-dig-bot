@@ -5,6 +5,7 @@ import shutil
 from pathlib import Path
 import glob
 from functools import wraps
+
 from data.fetcher import DataFetcher
 from data.storage import DataStorage
 from utils.logging import setup_logging, get_logger
@@ -67,76 +68,64 @@ def run_refresh():
     logger.info("Starting full data refresh pipeline")
     
     try:
-        # Track pipeline status
         pipeline_status = {
             'cleanup_success': False,
             'fetch_success': False,
             'storage_success': False,
-            'min_records_threshold': 100  # Higher threshold for full refresh
+            'min_records_threshold': 100
         }
         
-        # Clean existing data
+        # 1) Clean existing files (parquet, JSON state files)
         logger.info("Cleaning existing data files")
         clean_data_directory()
         pipeline_status['cleanup_success'] = True
         
-        # Initialize components
+        # 2) Initialize components
         logger.info("Initializing pipeline components")
         fetcher = DataFetcher()
         storage = DataStorage()
         
-        # Fetch full dataset
-        logger.info("Fetching full dataset from Chicago 811")
+        # 3) Drop the permits table so we start from zero
+        logger.info("Dropping any existing 'permits' table to purge old data")
+        storage.drop_permits_table()
+        
+        # 4) Fetch full dataset (CSV from Chicago data portal)
+        logger.info("Fetching full dataset from Chicago 811 CSV")
         data = fetcher.fetch_full_dataset()
         records_fetched = len(data)
         logger.info(f"Retrieved {records_fetched} records")
         
-        # Validate fetch results
         if records_fetched == 0:
             raise DataValidationError("No records fetched during full refresh")
         
-        # Check for required columns using normalized names
-        required_columns = ['dig_ticket_number', 'request_date', 'is_emergency']
-        missing_columns = [col for col in required_columns if col not in data.columns]
-        if missing_columns:
-            raise DataValidationError(f"Fetched data is missing required columns: {missing_columns}")
-            
         pipeline_status['fetch_success'] = True
         
-        # Store data with improved tracking
-        logger.info("Processing and storing data")
-        storage_stats = storage.process_and_store(data)
+        # 5) Bulk insert in one shot
+        logger.info("Performing bulk insert into DuckDB (full refresh)")
+        storage_stats = storage.store_full_data(data)  # <-- Single-statement approach
+        total_records_inserted = storage_stats.get('total_records', 0)
         
-        # Log detailed storage statistics
-        logger.info("Storage operation completed:")
-        logger.info(f"- Total records processed: {storage_stats['total_records']}")
-        logger.info(f"- New records inserted: {storage_stats['inserts']}")
-        logger.info(f"- Existing records updated: {storage_stats['updates']}")
+        logger.info(f"Storage operation completed: {total_records_inserted} records now in 'permits' table")
         
-        # Validate storage results
-        if storage_stats['total_records'] < pipeline_status['min_records_threshold']:
+        if total_records_inserted < pipeline_status['min_records_threshold']:
             raise DataValidationError(
-                f"Insufficient records processed: {storage_stats['total_records']} "
+                f"Insufficient records processed: {total_records_inserted} "
                 f"(minimum: {pipeline_status['min_records_threshold']})"
             )
             
         pipeline_status['storage_success'] = True
         
-        # Verify all validation checks passed
-        if all([
-            pipeline_status['cleanup_success'],
-            pipeline_status['fetch_success'],
-            pipeline_status['storage_success']
-        ]):
-            logger.info("Full data refresh completed successfully:")
+        # Final checks
+        if all([pipeline_status['cleanup_success'],
+                pipeline_status['fetch_success'],
+                pipeline_status['storage_success']]):
+            logger.info("Full data refresh completed successfully.")
             logger.info(f"- Records fetched: {records_fetched}")
-            logger.info(f"- Records processed: {storage_stats['total_records']}")
-            logger.info(f"- New records: {storage_stats['inserts']}")
-            logger.info(f"- Updated records: {storage_stats['updates']}")
+            logger.info(f"- Final record count in DB: {total_records_inserted}")
         else:
             failed_checks = [
-                check for check, status in pipeline_status.items()
-                if isinstance(status, bool) and not status
+                key for key, val in pipeline_status.items()
+                if isinstance(val, bool) and not val
             ]
             raise DataValidationError(
                 f"Data refresh validation checks failed: {failed_checks}"
@@ -147,15 +136,10 @@ def run_refresh():
         raise
 
 def main():
-    """Main entry point with logging setup."""
     try:
-        # Initialize logging
         setup_logging()
         logger.info("Starting Chicago Dig Bot data refresh")
-        
-        # Run the refresh pipeline
         run_refresh()
-        
     except Exception as e:
         logger.error(f"Fatal error in data refresh: {str(e)}")
         raise

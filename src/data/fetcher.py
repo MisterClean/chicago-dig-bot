@@ -26,10 +26,18 @@ class DataFetcher:
         
         # Track last fetch time
         self.last_fetch_file = self.data_dir / 'last_fetch.json'
+        
+        # Days to fetch from config
+        self.days_to_fetch = config.soda_days_to_fetch
+        # Additional overlap (e.g., 2 days) to catch late-arriving tickets
+        self.overlap_days = getattr(config, 'overlap_days', 2)
+        # If you want a threshold for consecutive no-data
+        self.consecutive_no_data_threshold = getattr(config, 'consecutive_no_data_threshold', 3)
+        # Local counter file
+        self.no_data_counter_file = self.data_dir / 'no_data_counter.json'
     
     def _normalize_columns(self, df):
         """Normalize column names and data types for consistency."""
-        # Map CSV/API column names to our normalized names based on data portal docs
         column_map = {
             # CSV format (original column names)
             'DIG_TICKET#': 'dig_ticket_number',
@@ -67,24 +75,24 @@ class DataFetcher:
             'primarycontactlast': 'contact_last_name'
         }
         
-        # Rename columns if they exist
         existing_columns = set(df.columns)
         rename_map = {old: new for old, new in column_map.items() if old in existing_columns}
         df = df.rename(columns=rename_map)
         
-        # Convert date columns (Floating Timestamp in SODA)
+        # Convert date columns
         date_columns = ['request_date', 'dig_date', 'expiration_date']
         for col in date_columns:
             if col in df.columns:
-                df[col] = pd.to_datetime(df[col])
+                df[col] = pd.to_datetime(df[col], errors='coerce')
         
-        # Convert emergency request to boolean (Checkbox in SODA)
+        # Convert emergency to boolean
         if 'is_emergency' in df.columns:
             df['is_emergency'] = df['is_emergency'].astype(str).str.lower().isin(['true', 't', 'yes', 'y', '1'])
         
         # Convert numeric columns
         numeric_columns = {
-            'street_number_from': 'Int64',  # nullable integer
+            'street_number_from': 'Int64',
+            'street_number_to': 'Int64',
             'latitude': 'float64',
             'longitude': 'float64'
         }
@@ -101,32 +109,18 @@ class DataFetcher:
         return df
     
     def fetch_full_dataset(self):
-        """Fetch the complete dataset from CSV endpoint."""
+        """Fetch the complete dataset from CSV endpoint (used in full refresh)."""
         logger.info("Fetching full dataset from CSV endpoint")
         
         try:
-            # Get CSV URL from config
             csv_url = config.initial_csv_path
-            
-            # Download and parse CSV with correct dtypes
             logger.info(f"Downloading CSV from {csv_url}")
-            df = pd.read_csv(csv_url, dtype={
-                'DIG_TICKET#': str,
-                'PERMIT#': str,
-                'STNOFROM': str,
-                'STNOTO': str,
-                'DIRECTION': str,
-                'STNAME': str,
-                'SUFFIX': str,
-                'PLACEMENT': str,
-                'PRIMARYCONTACTFIRST': str,
-                'PRIMARYCONTACTLAST': str
-            })
+            df = pd.read_csv(csv_url, dtype=str)
             
             # Update last fetch time
             self._update_last_fetch()
             
-            # Normalize column names and data types
+            # Normalize columns
             df = self._normalize_columns(df)
             
             logger.info(f"Successfully fetched {len(df)} records from CSV")
@@ -137,29 +131,33 @@ class DataFetcher:
             raise
     
     def fetch_recent_data(self):
-        """Fetch recent records using SODA API."""
+        """
+        Fetch recent records using SODA API, overlapping the last X days + overlap_days
+        to handle late-arriving or updated tickets.
+        """
         logger.info("Fetching recent data from SODA API")
         
         try:
-            # Calculate date range
-            days_to_fetch = config.soda_days_to_fetch
+            # Chicago local time
             chicago_tz = pytz.timezone('America/Chicago')
             chicago_now = datetime.now(chicago_tz)
-            cutoff_date = chicago_now - timedelta(days=days_to_fetch)
+            
+            # Overlapping window: 
+            # e.g., if config says 7 days, we add overlap_days (say 2) => 9-day window
+            total_days = self.days_to_fetch + self.overlap_days
+            cutoff_date = chicago_now - timedelta(days=total_days)
             
             # Prepare API parameters
             params = {
                 '$order': 'requestdate DESC',
                 '$limit': config.soda_records_limit,
-                '$where': f"requestdate > '{cutoff_date.strftime('%Y-%m-%d')}'"
+                '$where': f"requestdate >= '{cutoff_date.strftime('%Y-%m-%d')}'"
             }
             
             headers = {}
             if self.api_token:
                 headers['X-App-Token'] = self.api_token
             
-            # Make API request
-            logger.info(f"Requesting data from {self.api_url}")
             response = requests.get(
                 self.api_url,
                 params=params,
@@ -168,17 +166,24 @@ class DataFetcher:
             )
             response.raise_for_status()
             
-            # Parse JSON response into DataFrame
             data = response.json()
             df = pd.DataFrame(data)
+            
+            # Normalize columns and types
+            df = self._normalize_columns(df)
+            
+            logger.info(f"Fetched {len(df)} records from the last {total_days} days.")
             
             # Update last fetch time
             self._update_last_fetch()
             
-            # Normalize column names and data types
-            df = self._normalize_columns(df)
+            # Handle no data scenario
+            if df.empty:
+                logger.warning("No new data retrieved from SODA API. Data portal may not have updated.")
+                self._increment_no_data_counter()
+            else:
+                self._reset_no_data_counter()
             
-            logger.info(f"Successfully fetched {len(df)} records from API")
             return df
             
         except Exception as e:
@@ -194,3 +199,37 @@ class DataFetcher:
                 }, f)
         except Exception as e:
             logger.warning(f"Failed to update last fetch time: {str(e)}")
+    
+    def _increment_no_data_counter(self):
+        """Increment the local no-data counter and check if we need a full refresh fallback."""
+        count = 0
+        if self.no_data_counter_file.exists():
+            try:
+                with open(self.no_data_counter_file, 'r') as f:
+                    data = json.load(f)
+                    count = data.get('no_data_count', 0)
+            except Exception as e:
+                logger.warning(f"Failed to read no_data_counter.json: {e}")
+        
+        count += 1
+        logger.info(f"No-data days in a row: {count}")
+        
+        # Save back
+        try:
+            with open(self.no_data_counter_file, 'w') as f:
+                json.dump({'no_data_count': count}, f)
+        except Exception as e:
+            logger.warning(f"Failed to write no_data_counter.json: {e}")
+        
+        # Optional: if count >= threshold, trigger or log advice for a full refresh fallback
+        if count >= self.consecutive_no_data_threshold:
+            logger.warning(
+                f"No new data for {count} consecutive fetches. "
+                f"Consider running a full refresh or investigating data portal status."
+            )
+    
+    def _reset_no_data_counter(self):
+        """Reset the no-data counter to zero."""
+        if self.no_data_counter_file.exists():
+            self.no_data_counter_file.unlink()
+        logger.info("Reset no-data counter to 0.")
