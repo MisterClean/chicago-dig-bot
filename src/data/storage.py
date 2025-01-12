@@ -49,8 +49,8 @@ class DataStorage:
                     longitude DOUBLE,
                     contact_first_name VARCHAR,
                     contact_last_name VARCHAR,
-                    created_at VARCHAR DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now')),
-                    updated_at VARCHAR DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now'))
+                    created_at VARCHAR DEFAULT (strftime('%Y-%m-%d %H:%M:%S', CAST(CURRENT_TIMESTAMP AS TIMESTAMP))),
+                    updated_at VARCHAR DEFAULT (strftime('%Y-%m-%d %H:%M:%S', CAST(CURRENT_TIMESTAMP AS TIMESTAMP)))
                 )
             """)
             
@@ -194,7 +194,7 @@ class DataStorage:
                             longitude = ?,
                             contact_first_name = ?,
                             contact_last_name = ?,
-                            updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now')
+                            updated_at = strftime('%Y-%m-%d %H:%M:%S', CAST(CURRENT_TIMESTAMP AS TIMESTAMP))
                         WHERE dig_ticket_number = ?
                     """, [
                         update_record['permit_number'],
@@ -311,8 +311,8 @@ class DataStorage:
                     longitude,
                     contact_first_name,
                     contact_last_name,
-                    strftime('%Y-%m-%d %H:%M:%S', 'now') as created_at,
-                    strftime('%Y-%m-%d %H:%M:%S', 'now') as updated_at
+                    strftime('%Y-%m-%d %H:%M:%S', CAST(CURRENT_TIMESTAMP AS TIMESTAMP)) as created_at,
+                    strftime('%Y-%m-%d %H:%M:%S', CAST(CURRENT_TIMESTAMP AS TIMESTAMP)) as updated_at
                 FROM temp_df
             """)
 
