@@ -142,8 +142,14 @@ class DataStorage:
             
             # Insert new records
             if not new_records.empty:
+                # Convert timestamps to strings in ISO format for DuckDB
+                insert_df = new_records.copy()
+                for col in ['request_date', 'dig_date', 'expiration_date']:
+                    if col in insert_df.columns:
+                        insert_df[col] = insert_df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
+
                 # Convert DataFrame to list of tuples for insertion
-                records_to_insert = new_records[[
+                records_to_insert = insert_df[[
                     'dig_ticket_number', 'permit_number', 'request_date', 'dig_date',
                     'expiration_date', 'is_emergency', 'street_name', 'street_direction',
                     'street_number_from', 'street_number_to', 'street_suffix', 'dig_location',
@@ -164,6 +170,12 @@ class DataStorage:
             # Update existing records
             if not existing_records.empty:
                 for _, record in existing_records.iterrows():
+                    # Convert timestamps to strings
+                    update_record = record.copy()
+                    for col in ['request_date', 'dig_date', 'expiration_date']:
+                        if pd.notnull(update_record[col]):
+                            update_record[col] = update_record[col].strftime('%Y-%m-%d %H:%M:%S')
+
                     conn.execute("""
                         UPDATE permits 
                         SET 
@@ -185,22 +197,22 @@ class DataStorage:
                             updated_at = CURRENT_TIMESTAMP
                         WHERE dig_ticket_number = ?
                     """, [
-                        record['permit_number'],
-                        record['request_date'],
-                        record['dig_date'],
-                        record['expiration_date'],
-                        record['is_emergency'],
-                        record['street_name'],
-                        record['street_direction'],
-                        record['street_number_from'],
-                        record['street_number_to'],
-                        record['street_suffix'],
-                        record['dig_location'],
-                        record['latitude'],
-                        record['longitude'],
-                        record['contact_first_name'],
-                        record['contact_last_name'],
-                        record['dig_ticket_number']
+                        update_record['permit_number'],
+                        update_record['request_date'],
+                        update_record['dig_date'],
+                        update_record['expiration_date'],
+                        update_record['is_emergency'],
+                        update_record['street_name'],
+                        update_record['street_direction'],
+                        update_record['street_number_from'],
+                        update_record['street_number_to'],
+                        update_record['street_suffix'],
+                        update_record['dig_location'],
+                        update_record['latitude'],
+                        update_record['longitude'],
+                        update_record['contact_first_name'],
+                        update_record['contact_last_name'],
+                        update_record['dig_ticket_number']
                     ])
                 
                 stats['updates'] = len(existing_records)
