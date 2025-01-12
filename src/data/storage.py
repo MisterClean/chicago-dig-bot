@@ -35,9 +35,9 @@ class DataStorage:
                 CREATE TABLE IF NOT EXISTS permits (
                     dig_ticket_number VARCHAR PRIMARY KEY,
                     permit_number VARCHAR,
-                    request_date TIMESTAMP,
-                    dig_date TIMESTAMP,
-                    expiration_date TIMESTAMP,
+                    request_date VARCHAR,
+                    dig_date VARCHAR,
+                    expiration_date VARCHAR,
                     is_emergency BOOLEAN,
                     street_name VARCHAR,
                     street_direction VARCHAR,
@@ -49,8 +49,8 @@ class DataStorage:
                     longitude DOUBLE,
                     contact_first_name VARCHAR,
                     contact_last_name VARCHAR,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at VARCHAR DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now')),
+                    updated_at VARCHAR DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now'))
                 )
             """)
             
@@ -194,7 +194,7 @@ class DataStorage:
                             longitude = ?,
                             contact_first_name = ?,
                             contact_last_name = ?,
-                            updated_at = CURRENT_TIMESTAMP
+                            updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now')
                         WHERE dig_ticket_number = ?
                     """, [
                         update_record['permit_number'],
@@ -222,7 +222,7 @@ class DataStorage:
             
             # Save all data (new + existing) to a single parquet file
             # You might want to re-query the entire table or just use df combined with prior data
-            # For simplicity, we’ll just save `df` here.
+            # For simplicity, we'll just save `df` here.
             self._save_to_parquet(df)
             
             return stats
@@ -237,7 +237,7 @@ class DataStorage:
             conn = duckdb.connect(str(self.db_path))
             query = f"""
                 SELECT * FROM permits 
-                WHERE dig_date >= CURRENT_DATE - INTERVAL '{days} days'
+                WHERE CAST(dig_date AS DATE) >= CURRENT_DATE - INTERVAL '{days} days'
                 ORDER BY dig_date DESC
             """
             df = conn.execute(query).fetchdf()
@@ -279,11 +279,17 @@ class DataStorage:
             # Connect to DuckDB
             conn = duckdb.connect(str(self.db_path))
 
+            # Convert timestamps to strings
+            df_copy = df.copy()
+            for col in ['request_date', 'dig_date', 'expiration_date']:
+                if col in df_copy.columns:
+                    df_copy[col] = df_copy[col].dt.strftime('%Y-%m-%d %H:%M:%S')
+
             # (Optionally) Drop table if it still exists
             conn.execute("DROP TABLE IF EXISTS permits")
 
             # Register the DataFrame as a DuckDB virtual table
-            conn.register("temp_df", df)
+            conn.register("temp_df", df_copy)
 
             # Create the table in one statement from the DataFrame
             conn.execute("""
@@ -305,18 +311,13 @@ class DataStorage:
                     longitude,
                     contact_first_name,
                     contact_last_name,
-                    CURRENT_TIMESTAMP as created_at,
-                    CURRENT_TIMESTAMP as updated_at
+                    strftime('%Y-%m-%d %H:%M:%S', 'now') as created_at,
+                    strftime('%Y-%m-%d %H:%M:%S', 'now') as updated_at
                 FROM temp_df
             """)
 
             # Create an index on dig_date for faster queries
             conn.execute("CREATE INDEX IF NOT EXISTS idx_dig_date ON permits(dig_date)")
-
-            # (Optional) If you need a PRIMARY KEY, you can do:
-            # DuckDB doesn’t fully support “ALTER TABLE ... ADD PRIMARY KEY” as of now,
-            # but you can add a UNIQUE constraint:
-            # conn.execute("ALTER TABLE permits ADD CONSTRAINT unique_dig_ticket UNIQUE (dig_ticket_number)")
 
             # Count how many rows are in the new table
             result = conn.execute("SELECT COUNT(*) as cnt FROM permits").fetchone()
@@ -324,9 +325,6 @@ class DataStorage:
 
             # Close connection
             conn.close()
-
-            # (Optional) Save to Parquet if you want a file-based snapshot
-            # self._save_to_parquet(df)
 
             logger.info(f"Bulk insert complete: {total_records} records in 'permits' table.")
             return {
