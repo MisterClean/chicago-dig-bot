@@ -27,6 +27,9 @@ class DataStorage:
         try:
             conn = duckdb.connect(str(self.db_path))
             
+            # Drop any existing index to avoid conflicts
+            conn.execute("DROP INDEX IF EXISTS idx_dig_date")
+            
             # Create permits table if it doesn't exist
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS permits (
