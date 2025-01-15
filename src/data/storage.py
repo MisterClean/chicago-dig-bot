@@ -219,3 +219,48 @@ class DataStorage:
         except Exception as e:
             logger.error(f"Error getting recent permits: {str(e)}")
             raise
+
+    def store_full_data(self, df):
+        """Store complete dataset during full refresh operation."""
+        logger.info("Storing full dataset")
+        
+        try:
+            # Prepare DataFrame with correct types
+            df = self._prepare_dataframe(df)
+            
+            stats = {
+                'total_records': len(df)
+            }
+            
+            # Store in SQLite efficiently
+            with sqlite3.connect(self.db_path) as conn:
+                # Direct bulk insert since we're doing a full refresh
+                df.to_sql(
+                    'permits',
+                    conn,
+                    if_exists='append',  # Table was already dropped, so we can just append
+                    index=False,
+                    method='multi',  # Use multiple INSERT statements for better performance
+                    chunksize=5000  # Process in larger chunks for full refresh
+                )
+                
+                # Verify final count
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM permits")
+                final_count = cursor.fetchone()[0]
+                stats['total_records'] = final_count
+            
+            # Save to parquet
+            df.to_parquet(
+                self.data_dir / "chicago811_permits.parquet",
+                compression='snappy',
+                index=False,
+                engine='fastparquet'
+            )
+            logger.info(f"Saved {len(df)} records to parquet file")
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Error storing full dataset: {str(e)}")
+            raise
