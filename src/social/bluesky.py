@@ -302,12 +302,12 @@ class BlueskyPoster:
             logger.error(error_msg)
             raise BlueskyPostError(error_msg)
 
-    def post_daily_thread(self, day_comparison: Dict, leaderboard: Dict, permit_stats: Dict, heatmap_path: str, emergency_heatmap_path: str) -> None:
+    def post_daily_thread(self, day_comparison: Dict, leaderboard: List[Dict], permit_stats: Dict, heatmap_path: str, emergency_heatmap_path: str) -> None:
         """Post a daily summary thread with statistics and visualizations.
         
         Args:
             day_comparison: Dictionary containing day-of-week comparison metrics
-            leaderboard: Dictionary containing contractor leaderboards
+            leaderboard: List of dictionaries containing contractor data
             permit_stats: Dictionary containing permit statistics
             heatmap_path: Path to the heatmap visualization
             emergency_heatmap_path: Path to the emergency heatmap visualization
@@ -333,9 +333,9 @@ class BlueskyPoster:
             # Format the leaderboard post
             leaderboard_post = "🏆 Top Diggers\n\n"
             
-            # Add overall leaders with medal emojis
+            # Add leaders with medal emojis
             medals = ["🥇", "🥈", "🥉"]
-            for i, leader in enumerate(leaderboard['overall'][:5]):
+            for i, leader in enumerate(leaderboard[:5]):
                 if leader and 'name' in leader and 'count' in leader:
                     emoji = medals[i] if i < 3 else "👷"
                     leaderboard_post += f"{emoji} {leader['name']}: {leader['count']}\n"
@@ -360,3 +360,4 @@ class BlueskyPoster:
             error_msg = f"Failed to post daily thread: {str(e)}"
             logger.error(error_msg)
             raise BlueskyPostError(error_msg)
+        

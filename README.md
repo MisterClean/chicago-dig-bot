@@ -2,14 +2,77 @@
 
 A Python bot that tracks and analyzes Chicago 811 dig tickets, providing daily insights about infrastructure work happening across the city. The bot posts daily summaries to Bluesky, highlighting emergency vs regular dig permits, contractor activity, and geographic patterns.
 
-## Overview
+## System Architecture
 
-The Chicago Dig Bot monitors the City of Chicago's 811 dig ticket data to:
-- Track new dig permits issued across the city
-- Analyze patterns in emergency vs regular dig work
-- Identify active contractors and their work patterns
-- Generate visualizations of dig activity across Chicago
-- Share daily insights via Bluesky social network
+The bot operates through three main workflows: data refresh, daily updates, and random permit posts. Each workflow is built on a modular architecture that separates data collection, analysis, visualization, and social media integration:
+### Core Workflows
+
+1. **Data Refresh** (src/scripts/refresh_data.py)
+   - Performs complete data refresh from Chicago 811 API
+   - Cleans existing data files
+   - Validates and stores complete dataset
+   - Used for initial setup and data resets
+
+2. **Daily Update** (src/scripts/run_daily_update.py)
+   - Fetches recent permit data
+   - Updates storage with new records
+   - Generates statistics and visualizations
+   - Posts daily summary thread to Bluesky
+
+3. **Random Permit** (src/scripts/post_random_permit.py)
+   - Selects random permit from yesterday
+   - Fetches Google Street View image of location
+   - Posts permit details with image to Bluesky
+   - Runs every 3 hours via cron
+
+### Component Architecture
+
+```mermaid
+graph TD
+    A[Chicago Data Portal] -->|SODA API| B[Data Fetcher]
+    B -->|Raw Data| C[Data Storage]
+    C -->|SQLite| D[Query Engine]
+    C -->|Parquet| E[Analytics Engine]
+    D --> F[Daily Stats]
+    E --> F
+    F --> G[Visualization Engine]
+    F --> H[Social Poster]
+    G -->|Charts & Heatmaps| H
+    H -->|Posts & Threads| I[Bluesky]
+```
+
+### Data Pipeline Architecture
+
+```mermaid
+graph TD
+    subgraph Refresh
+        R1[Chicago Data Portal] -->|Full Dataset| R2[Data Cleaning]
+        R2 -->|Validated Data| R3[Storage Reset]
+    end
+    
+    subgraph Daily Update
+        D1[Chicago Data Portal] -->|Recent Data| D2[Data Validation]
+        D2 -->|New Records| D3[Storage Update]
+        D3 -->|Current Data| D4[Analytics]
+        D4 -->|Stats & Trends| D5[Visualization]
+        D5 -->|Charts & Maps| D6[Social Posts]
+    end
+    
+    subgraph Random Permit
+        P1[Parquet Storage] -->|Query Yesterday| P2[Random Selection]
+        P2 -->|Address| P3[Street View API]
+        P3 -->|Location Image| P4[Format Post]
+        P4 -->|Post Content| P5[Social Update]
+    end
+```
+
+The data pipeline ensures data quality and efficient storage:
+- **Data Fetcher**: Connects to Chicago's SODA API to fetch new dig tickets
+- **Validation Layer**: Ensures data integrity and proper formatting
+- **Dual Storage**:
+  - SQLite for operational queries and daily updates
+  - Parquet for efficient analytics and historical analysis
+- **Data Schema**: Normalized structure for consistent analysis
 
 ## Features
 
@@ -45,18 +108,29 @@ The Chicago Dig Bot monitors the City of Chicago's 811 dig ticket data to:
 - Geographic clustering analysis
 - Emergency vs regular permit tracking
 
-## Data Source
+## Technical Components
 
-The data comes from the [Chicago Data Portal 811 Dig Tickets dataset](https://data.cityofchicago.org/Transportation/Chicago-811-Dig-Tickets/gptz-y9ub). To access the data programmatically, you'll need an API key from the Chicago Data Portal:
+### Data Storage (src/data/storage.py)
+- **DataStorage Class**: Manages both SQLite and Parquet storage
+- Efficient batch processing with WAL mode
+- Handles data type conversion and normalization
+- Maintains data integrity with UPSERT operations
 
-1. Create an account at [Chicago Data Portal](https://data.cityofchicago.org)
-2. Go to your profile and click on "Developer Settings"
-3. Create a new API key
-4. Add the API key to your `.env` file as `CHICAGO_DATA_PORTAL_TOKEN`
+### Analytics Engine (src/analytics/stats.py)
+- **StatsGenerator Class**: Produces daily statistics and trends
+- Contractor name normalization with extensive rule sets
+- Historical comparisons and rolling averages
+- Geographic pattern analysis
+
+### Social Integration (src/social/bluesky.py)
+- **BlueskyPoster Class**: Manages social media updates
+- Thread creation with rich media support
+- Rate limiting and error handling
+- Test mode for development
 
 ## Data Schema
 
-The bot uses parquet files to store dig ticket data with the following schema:
+The bot uses a normalized schema for storing dig ticket data:
 
 | Field Name | Type | Description |
 |------------|------|-------------|
@@ -208,26 +282,6 @@ sudo apt install -y xvfb libgbm1
 PYTHONPATH=$PYTHONPATH:src python src/scripts/init_duckdb.py
 ```
 
-## Usage
-
-### Daily Updates
-Run the daily update script to fetch new data and post updates:
-```bash
-PYTHONPATH=$PYTHONPATH:src python src/scripts/run_daily_update.py
-```
-
-This will:
-1. Fetch the latest dig ticket data
-2. Update statistics and analytics
-3. Generate new visualizations
-4. Post updates to Bluesky
-
-### Test Mode
-Enable test mode in `config.yaml` to run without posting to Bluesky:
-```yaml
-test_mode: true
-```
-
 ## Production Deployment
 
 The bot uses PM2 for process management in production. Here's how to set it up on a Lightsail instance:
@@ -265,8 +319,6 @@ module.exports = {
 }
 ```
 
-Note: Replace `/path/to/chicago-dig-bot` with your actual project path.
-
 3. Start the processes:
 ```bash
 pm2 start ecosystem.config.js
@@ -288,31 +340,6 @@ pm2 list  # View all processes
 pm2 logs  # View logs
 pm2 monit # Monitor CPU/Memory usage
 ```
-
-## Data Pipeline
-
-The bot follows this daily workflow:
-
-1. **Data Collection**
-   - Fetches new dig tickets from Chicago's data portal
-   - Validates and processes new data
-   - Updates local database
-
-2. **Analysis**
-   - Generates daily statistics
-   - Compares to historical averages
-   - Updates contractor leaderboards
-   - Identifies geographic patterns
-
-3. **Visualization**
-   - Creates updated heatmaps
-   - Generates statistical charts
-   - Prepares visual comparisons
-
-4. **Social Updates**
-   - Composes daily summary thread
-   - Uploads visualizations
-   - Posts updates to Bluesky
 
 ## Contributing
 

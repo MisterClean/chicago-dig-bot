@@ -1,7 +1,5 @@
 """Module for storing and managing Chicago 811 dig permit data."""
-import os
 import sqlite3
-from datetime import datetime
 import pandas as pd
 from pathlib import Path
 from src.utils.logging import get_logger
@@ -16,11 +14,7 @@ class DataStorage:
         """Initialize the DataStorage with configuration."""
         self.data_dir = Path(config.data_dir)
         self.data_dir.mkdir(exist_ok=True)
-        
-        # Database configuration
         self.db_path = Path(config.db_file)
-        
-        # Initialize database if needed
         self._init_database()
     
     def _init_database(self):
@@ -28,6 +22,11 @@ class DataStorage:
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
+                
+                # Enable WAL mode for better write performance
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute("PRAGMA synchronous=NORMAL")
+                cursor.execute("PRAGMA cache_size=-2000") # Use 2MB of cache
                 
                 # Create permits table if it doesn't exist
                 cursor.execute("""
@@ -53,10 +52,14 @@ class DataStorage:
                     )
                 """)
                 
-                # Create index on dig_date for efficient querying
+                # Create indexes for efficient querying and upserts
                 cursor.execute("""
                     CREATE INDEX IF NOT EXISTS idx_dig_date 
-                    ON permits(dig_date)
+                    ON permits(DATE(dig_date))
+                """)
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_ticket_number
+                    ON permits(dig_ticket_number)
                 """)
                 
                 conn.commit()
@@ -64,142 +67,125 @@ class DataStorage:
         except Exception as e:
             logger.error(f"Error initializing database: {str(e)}")
             raise
-    
-    def _save_to_parquet(self, df):
-        """Save DataFrame to a single parquet file."""
-        try:
-            # Create parquet filename
-            parquet_path = self.data_dir / "chicago811_permits.parquet"
-            
-            # Save to parquet with compression
-            df.to_parquet(
-                parquet_path,
-                compression='snappy',
-                index=False
-            )
-            
-            logger.info(f"Saved {len(df)} records to {parquet_path}")
-            
-        except Exception as e:
-            logger.error(f"Error saving to parquet: {str(e)}")
-            raise
-    
+
+    def _prepare_dataframe(self, df):
+        """Prepare DataFrame by ensuring correct types and handling nulls."""
+        # Work on a copy to avoid SettingWithCopyWarning
+        df = df.copy()
+        
+        logger.info("Preparing DataFrame for storage")
+        
+        # Pre-allocate numeric columns with correct types
+        numeric_cols = {
+            'street_number_from': 'Int64',
+            'street_number_to': 'Int64',
+            'latitude': 'float64',
+            'longitude': 'float64'
+        }
+        df[list(numeric_cols.keys())] = df[list(numeric_cols.keys())].astype(numeric_cols)
+        
+        # Handle date columns more efficiently
+        date_columns = ['request_date', 'dig_date', 'expiration_date']
+        for col in date_columns:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors='coerce')
+                df[col] = df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Optimize boolean conversion
+        if 'is_emergency' in df.columns:
+            df['is_emergency'] = df['is_emergency'].map({'Y': 1, 'N': 0, True: 1, False: 0}).fillna(0).astype(int)
+        
+        # Handle string columns more efficiently
+        string_columns = [
+            'dig_ticket_number', 'permit_number', 'street_name', 
+            'street_direction', 'street_suffix', 'dig_location',
+            'contact_first_name', 'contact_last_name'
+        ]
+        # Convert all string columns at once
+        df[string_columns] = df[string_columns].astype(str).replace('nan', None)
+        
+        return df
+
     def process_and_store(self, df):
-        """Process and store permit data in both SQLite and Parquet formats."""
+        """Process and store permit data in both SQLite and Parquet formats using UPSERT."""
         logger.info("Processing and storing permit data")
         
         try:
-            # Track statistics
             stats = {
                 'total_records': len(df),
-                'inserts': 0,
-                'updates': 0
+                'processed': 0
             }
             
-            # Ensure minimum required columns exist
-            required_columns = [
-                'dig_ticket_number', 'permit_number', 'request_date', 'dig_date', 
-                'expiration_date', 'is_emergency', 'street_name', 'street_direction',
-                'street_number_from', 'street_number_to', 'street_suffix', 'dig_location',
-                'latitude', 'longitude', 'contact_first_name', 'contact_last_name'
-            ]
+            # Prepare DataFrame with correct types
+            df = self._prepare_dataframe(df)
             
-            missing_columns = [col for col in required_columns if col not in df.columns]
-            if missing_columns:
-                logger.warning(f"Missing some columns: {missing_columns}")
-                # Add missing columns as None/NaN
-                for col in missing_columns:
-                    df[col] = None
-            
-            # Connect to database
+            # Get existing ticket numbers for statistics only
             with sqlite3.connect(self.db_path) as conn:
-                # Get existing ticket numbers
-                existing_tickets = pd.read_sql(
+                existing_tickets = set(pd.read_sql_query(
                     "SELECT dig_ticket_number FROM permits",
                     conn
-                )['dig_ticket_number'].tolist()
+                )['dig_ticket_number'])
                 
-                # Split into new and existing records
-                new_records = df[~df['dig_ticket_number'].isin(existing_tickets)]
-                existing_records = df[df['dig_ticket_number'].isin(existing_tickets)]
-                
-                # Insert new records
-                if not new_records.empty:
-                    # Convert timestamps to strings for SQLite
-                    for col in ['request_date', 'dig_date', 'expiration_date']:
-                        new_records[col] = new_records[col].dt.strftime('%Y-%m-%d %H:%M:%S')
+                # Process records in chunks
+                chunk_size = 1000  # Adjust based on memory constraints
+                for chunk_start in range(0, len(df), chunk_size):
+                    chunk = df.iloc[chunk_start:chunk_start + chunk_size]
                     
-                    # Convert boolean to integer for SQLite
-                    new_records['is_emergency'] = new_records['is_emergency'].astype(int)
-                    
-                    new_records.to_sql(
-                        'permits',
+                    # Create temporary table for the chunk
+                    chunk.to_sql(
+                        'temp_permits',
                         conn,
-                        if_exists='append',
+                        if_exists='replace',
                         index=False
                     )
-                    stats['inserts'] = len(new_records)
-                    logger.info(f"Inserted {stats['inserts']} new records")
-                
-                # Update existing records
-                if not existing_records.empty:
-                    for _, record in existing_records.iterrows():
-                        # Convert timestamps to strings for SQLite
-                        params = (
-                            str(record['permit_number']) if pd.notna(record['permit_number']) else None,
-                            record['request_date'].strftime('%Y-%m-%d %H:%M:%S') if pd.notna(record['request_date']) else None,
-                            record['dig_date'].strftime('%Y-%m-%d %H:%M:%S') if pd.notna(record['dig_date']) else None,
-                            record['expiration_date'].strftime('%Y-%m-%d %H:%M:%S') if pd.notna(record['expiration_date']) else None,
-                            int(bool(record['is_emergency'])) if pd.notna(record['is_emergency']) else None,
-                            str(record['street_name']) if pd.notna(record['street_name']) else None,
-                            str(record['street_direction']) if pd.notna(record['street_direction']) else None,
-                            int(record['street_number_from']) if pd.notna(record['street_number_from']) else None,
-                            int(record['street_number_to']) if pd.notna(record['street_number_to']) else None,
-                            str(record['street_suffix']) if pd.notna(record['street_suffix']) else None,
-                            str(record['dig_location']) if pd.notna(record['dig_location']) else None,
-                            float(record['latitude']) if pd.notna(record['latitude']) else None,
-                            float(record['longitude']) if pd.notna(record['longitude']) else None,
-                            str(record['contact_first_name']) if pd.notna(record['contact_first_name']) else None,
-                            str(record['contact_last_name']) if pd.notna(record['contact_last_name']) else None,
-                            str(record['dig_ticket_number'])
-                        )
-                        
-                        conn.execute("""
-                            UPDATE permits 
-                            SET 
-                                permit_number = ?,
-                                request_date = ?,
-                                dig_date = ?,
-                                expiration_date = ?,
-                                is_emergency = ?,
-                                street_name = ?,
-                                street_direction = ?,
-                                street_number_from = ?,
-                                street_number_to = ?,
-                                street_suffix = ?,
-                                dig_location = ?,
-                                latitude = ?,
-                                longitude = ?,
-                                contact_first_name = ?,
-                                contact_last_name = ?,
-                                updated_at = CURRENT_TIMESTAMP
-                            WHERE dig_ticket_number = ?
-                        """, params)
                     
-                    stats['updates'] = len(existing_records)
-                    logger.info(f"Updated {stats['updates']} existing records")
+                    # Perform UPSERT operation
+                    conn.execute("""
+                        INSERT OR REPLACE INTO permits (
+                            dig_ticket_number, permit_number, request_date,
+                            dig_date, expiration_date, is_emergency,
+                            street_name, street_direction, street_number_from,
+                            street_number_to, street_suffix, dig_location,
+                            latitude, longitude, contact_first_name,
+                            contact_last_name, created_at, updated_at
+                        )
+                        SELECT 
+                            t.*,
+                            COALESCE(
+                                (SELECT created_at FROM permits WHERE dig_ticket_number = t.dig_ticket_number),
+                                CURRENT_TIMESTAMP
+                            ),
+                            CURRENT_TIMESTAMP
+                        FROM temp_permits t
+                    """)
+                    
+                    conn.commit()
+                    stats['processed'] += len(chunk)
+                    logger.info(f"Processed {stats['processed']} records")
                 
-                conn.commit()
+                # Clean up temporary table
+                conn.execute("DROP TABLE IF EXISTS temp_permits")
+                
+                # Calculate inserts vs updates for reporting
+                processed_tickets = set(df['dig_ticket_number'])
+                stats['inserts'] = len(processed_tickets - existing_tickets)
+                stats['updates'] = len(processed_tickets & existing_tickets)
             
-            # Save all data to a single parquet file
-            self._save_to_parquet(df)
+            # Save to parquet more efficiently
+            df.to_parquet(
+                self.data_dir / "chicago811_permits.parquet",
+                compression='snappy',
+                index=False,
+                engine='fastparquet'  # Use fastparquet engine for better performance
+            )
+            logger.info(f"Saved {len(df)} records to {self.data_dir}/chicago811_permits.parquet")
             
             return stats
             
         except Exception as e:
             logger.error(f"Error processing and storing data: {str(e)}")
             raise
-    
+
     def get_recent_permits(self, days=30):
         """Get permits from the last N days."""
         try:

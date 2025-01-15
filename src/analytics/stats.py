@@ -324,37 +324,34 @@ class StatsGenerator:
             return {}
 
     def generate_daily_stats(self) -> Dict:
-        """Generate basic statistics for the current day's permits.
-        
-        Returns:
-            Dictionary containing daily statistics including:
-            - total_permits: Total number of permits
-            - emergency_permits: Number of emergency permits
-            - regular_permits: Number of regular permits
-            - unique_contractors: Number of unique contractors
-            - unique_streets: Number of unique streets
-        """
+        """Generate basic statistics for the current day's permits."""
         try:
             logger.info("Generating daily statistics")
             self._validate_parquet_files()
             
             chicago_tz = pytz.timezone('America/Chicago')
             chicago_now = datetime.now(chicago_tz)
-            yesterday = (chicago_now - timedelta(days=1)).strftime('%Y-%m-%d')
+            yesterday = (chicago_now - timedelta(days=1)).date()
             
-            # First check if we have any data for yesterday
-            check_query = f"""
-            SELECT COUNT(*) as record_count
-            FROM read_parquet('{str(config.data_dir)}/*.parquet')
-            WHERE request_date::DATE = '{yesterday}'
+            # Query using DuckDB's date handling
+            query = f"""
+            WITH chicago_times AS (
+                SELECT *,
+                    dig_date::TIMESTAMP AT TIME ZONE 'America/Chicago' AS chicago_time
+                FROM read_parquet('{str(config.data_dir)}/*.parquet')
+            )
+            SELECT
+                CAST(COUNT(*) AS INTEGER) as total_permits,
+                CAST(SUM(CASE WHEN is_emergency::BOOLEAN THEN 1 ELSE 0 END) AS INTEGER) as emergency_permits,
+                CAST(COUNT(DISTINCT street_name) AS INTEGER) as unique_streets
+            FROM chicago_times
+            WHERE chicago_time::DATE = '{yesterday}'
             """
             
-            check_result = self._execute_query(check_query)
-            record_count = int(check_result['record_count'].iloc[0])
+            result = self._execute_query(query)
             
-            if record_count == 0:
-                logger.warning(f"No records found for date {yesterday}")
-                # Return zeros for all stats when no data is found
+            if result.empty:
+                logger.warning(f"No data found for {yesterday}")
                 return {
                     'total_permits': 0,
                     'emergency_permits': 0,
@@ -362,37 +359,19 @@ class StatsGenerator:
                     'unique_streets': 0
                 }
             
-            # If we have data, proceed with the full query
-            query = f"""
-            SELECT
-                COUNT(*) as total_permits,
-                SUM(CASE WHEN is_emergency::BOOLEAN THEN 1 ELSE 0 END) as emergency_permits,
-                COUNT(DISTINCT street_name) as unique_streets
-            FROM read_parquet('{str(config.data_dir)}/*.parquet')
-            WHERE request_date::DATE = '{yesterday}'
-            """
-            
-            result = self._execute_query(query)
-            
-            if result.empty:
-                raise StatsGenerationError("No data found for daily statistics")
-            
-            # Handle potential NaN values by using fillna(0) before converting to int
-            # Get the values and handle NaN before arithmetic
-            total_permits = result['total_permits'].iloc[0].fillna(0)
-            emergency_permits = result['emergency_permits'].iloc[0].fillna(0)
-            unique_streets = result['unique_streets'].iloc[0].fillna(0)
+            # Extract values and handle nulls safely
+            total_permits = int(result['total_permits'].iloc[0] or 0)
+            emergency_permits = int(result['emergency_permits'].iloc[0] or 0)
+            unique_streets = int(result['unique_streets'].iloc[0] or 0)
             
             stats = {
-                'total_permits': int(total_permits),
-                'emergency_permits': int(emergency_permits),
-                'regular_permits': int(total_permits - emergency_permits),
-                'unique_streets': int(unique_streets)
+                'total_permits': total_permits,
+                'emergency_permits': emergency_permits,
+                'regular_permits': total_permits - emergency_permits,
+                'unique_streets': unique_streets
             }
             
-            logger.info("Daily statistics generated successfully")
-            logger.debug(f"Daily stats: {stats}")
-            
+            logger.info(f"Generated daily statistics: {stats}")
             return stats
             
         except Exception as e:
@@ -401,93 +380,92 @@ class StatsGenerator:
             raise StatsGenerationError(error_msg)
 
     def get_day_of_week_comparison(self, date_str: str) -> Dict:
-        """Compare permit counts for a given date with historical averages.
-        
-        Args:
-            date_str: Date string in YYYY-MM-DD format to analyze
-            
-        Returns:
-            Dictionary containing comparison data including:
-            - day_name: Name of the day of week
-            - actual_total: Total permits for the given date
-            - actual_emergency: Emergency permits for the given date
-            - actual_regular: Regular permits for the given date
-            - avg_total: Average total permits for this day of week
-            - avg_emergency: Average emergency permits for this day of week
-            - avg_regular: Average regular permits for this day of week
-            - total_diff_percent: Percentage difference in total permits vs average
-            - emergency_diff_percent: Percentage difference in emergency permits vs average
-            - regular_diff_percent: Percentage difference in regular permits vs average
-        """
+        """Compare permit counts for a given date with historical averages."""
         try:
             logger.info(f"Generating day of week comparison for {date_str}")
-            self._validate_parquet_files()
             
             # Parse the date
-            date = datetime.strptime(date_str, '%Y-%m-%d')
-            day_of_week = date.strftime('%A')
-            
-            # Calculate the date range for historical comparison
             chicago_tz = pytz.timezone('America/Chicago')
-            chicago_now = datetime.now(chicago_tz)
-            today = chicago_now.strftime('%Y-%m-%d')
-            rolling_window = config._get_nested('analytics', 'stats', 'rolling_window_days')
-            start_date = (datetime.now() - timedelta(days=rolling_window)).strftime('%Y-%m-%d')
+            target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+            day_of_week = target_date.strftime('%A')
             
-            # Get actual counts for the given date
-            actual_query = f"""
-            SELECT
-                COUNT(*) as total_permits,
-                SUM(CASE WHEN is_emergency::BOOLEAN THEN 1 ELSE 0 END) as emergency_permits,
-                SUM(CASE WHEN NOT is_emergency::BOOLEAN THEN 1 ELSE 0 END) as regular_permits
-            FROM read_parquet('{str(config.data_dir)}/*.parquet')
-            WHERE request_date::DATE = '{date_str}'
+            # Get current date range for historical comparison
+            rolling_window = config._get_nested('analytics', 'stats', 'rolling_window_days')
+            history_start = target_date - timedelta(days=rolling_window)
+            
+            # Query using DuckDB's date handling
+            query = f"""
+            WITH chicago_times AS (
+                SELECT *,
+                    dig_date::TIMESTAMP AT TIME ZONE 'America/Chicago' AS chicago_time
+                FROM read_parquet('{str(config.data_dir)}/*.parquet')
+            ),
+            daily_counts AS (
+                SELECT 
+                    chicago_time::DATE as date,
+                    COUNT(*) as total_permits,
+                    SUM(CASE WHEN is_emergency::BOOLEAN THEN 1 ELSE 0 END) as emergency_permits
+                FROM chicago_times
+                WHERE chicago_time::DATE = '{target_date}'
+                GROUP BY 1
+            )
+            SELECT 
+                COALESCE(total_permits, 0) as total_permits,
+                COALESCE(emergency_permits, 0) as emergency_permits
+            FROM daily_counts
             """
             
-            actual_result = self._execute_query(actual_query)
+            result = self._execute_query(query)
             
-            if actual_result.empty:
-                raise StatsGenerationError(f"No data found for date {date_str}")
+            # Get actual counts
+            if result.empty:
+                actual_total = 0
+                actual_emergency = 0
+            else:
+                actual_total = int(result['total_permits'].iloc[0])
+                actual_emergency = int(result['emergency_permits'].iloc[0])
             
-            actual_total = int(actual_result['total_permits'].iloc[0])
-            actual_emergency = int(actual_result['emergency_permits'].iloc[0])
-            actual_regular = int(actual_result['regular_permits'].iloc[0])
+            actual_regular = actual_total - actual_emergency
             
-            # Get historical averages for this day of week
+            # Get historical averages with timezone-aware comparison
             avg_query = f"""
-            WITH day_counts AS (
-                SELECT
-                    request_date::DATE as date,
-                    COUNT(*) as total_permits,
-                    SUM(CASE WHEN is_emergency::BOOLEAN THEN 1 ELSE 0 END) as emergency_permits,
-                    SUM(CASE WHEN NOT is_emergency::BOOLEAN THEN 1 ELSE 0 END) as regular_permits
+            WITH chicago_times AS (
+                SELECT *,
+                    dig_date::TIMESTAMP AT TIME ZONE 'America/Chicago' AS chicago_time
                 FROM read_parquet('{str(config.data_dir)}/*.parquet')
-                WHERE request_date::DATE <= '{today}'
-                AND request_date::DATE >= '{start_date}'
-                AND DAYNAME(request_date::DATE) = '{day_of_week}'
+            ),
+            historical_counts AS (
+                SELECT 
+                    chicago_time::DATE as date,
+                    COUNT(*) as total_permits,
+                    SUM(CASE WHEN is_emergency::BOOLEAN THEN 1 ELSE 0 END) as emergency_permits
+                FROM chicago_times
+                WHERE DAYNAME(chicago_time::DATE) = '{day_of_week}'
+                AND chicago_time::DATE < '{target_date}'
+                AND chicago_time::DATE >= '{history_start}'
                 GROUP BY 1
             )
             SELECT
                 AVG(total_permits) as avg_total,
                 AVG(emergency_permits) as avg_emergency,
-                AVG(regular_permits) as avg_regular,
                 COUNT(*) as num_days
-            FROM day_counts
+            FROM historical_counts
             """
             
             avg_result = self._execute_query(avg_query)
             
-            if avg_result.empty or avg_result['num_days'].iloc[0] == 0:
-                raise StatsGenerationError(f"No historical data found for {day_of_week}")
+            if avg_result.empty or int(avg_result['num_days'].iloc[0] or 0) == 0:
+                avg_total = 0
+                avg_emergency = 0
+            else:
+                avg_total = float(avg_result['avg_total'].iloc[0] or 0)
+                avg_emergency = float(avg_result['avg_emergency'].iloc[0] or 0)
             
-            avg_total = float(avg_result['avg_total'].iloc[0])
-            avg_emergency = float(avg_result['avg_emergency'].iloc[0])
-            avg_regular = float(avg_result['avg_regular'].iloc[0])
+            avg_regular = avg_total - avg_emergency
             
-            # Calculate percentage differences
-            total_diff_percent = ((actual_total - avg_total) / avg_total * 100) if avg_total > 0 else 0
-            emergency_diff_percent = ((actual_emergency - avg_emergency) / avg_emergency * 100) if avg_emergency > 0 else 0
-            regular_diff_percent = ((actual_regular - avg_regular) / avg_regular * 100) if avg_regular > 0 else 0
+            # Calculate percent differences
+            def calc_percent_diff(actual: int, avg: float) -> float:
+                return round(((actual - avg) / avg * 100) if avg > 0 else 0, 1)
             
             comparison = {
                 'day_name': day_of_week,
@@ -497,100 +475,98 @@ class StatsGenerator:
                 'avg_total': round(avg_total, 1),
                 'avg_emergency': round(avg_emergency, 1),
                 'avg_regular': round(avg_regular, 1),
-                'total_diff_percent': round(total_diff_percent, 1),
-                'emergency_diff_percent': round(emergency_diff_percent, 1),
-                'regular_diff_percent': round(regular_diff_percent, 1)
+                'total_diff_percent': calc_percent_diff(actual_total, avg_total),
+                'emergency_diff_percent': calc_percent_diff(actual_emergency, avg_emergency),
+                'regular_diff_percent': calc_percent_diff(actual_regular, avg_regular)
             }
             
-            logger.info("Day of week comparison generated successfully")
-            logger.debug(f"Comparison data: {comparison}")
-            
+            logger.info(f"Generated day comparison: {comparison}")
             return comparison
             
         except Exception as e:
-            error_msg = f"Failed to generate day of week comparison: {str(e)}"
+            error_msg = f"Failed to generate day comparison: {str(e)}"
             logger.error(error_msg)
             raise StatsGenerationError(error_msg)
 
-    def get_contractor_leaderboard(self, limit: int = 10) -> Dict[str, List[Dict]]:
+    def get_contractor_leaderboard(self, limit: int = 5) -> List[Dict]:
         """Generate leaderboards for contractors."""
         try:
             logger.info(f"Generating contractor leaderboard (limit: {limit})")
-            self._validate_parquet_files()
             
             chicago_tz = pytz.timezone('America/Chicago')
             chicago_now = datetime.now(chicago_tz)
-            yesterday = (chicago_now - timedelta(days=1)).strftime('%Y-%m-%d')
+            yesterday = (chicago_now - timedelta(days=1)).date()
             
-            query = f"""
-            WITH contractor_stats AS (
-                SELECT 
-                    contact_last_name as name,
-                    COUNT(*) as total_tickets,
-                    SUM(CASE WHEN is_emergency::BOOLEAN THEN 1 ELSE 0 END) as emergency_tickets,
-                    COUNT(DISTINCT street_name) as unique_streets
+            # Debug current data
+            debug_query = f"""
+            WITH chicago_times AS (
+                SELECT *,
+                    dig_date::TIMESTAMP AT TIME ZONE 'America/Chicago' AS chicago_time
                 FROM read_parquet('{str(config.data_dir)}/*.parquet')
-                WHERE request_date::DATE = '{yesterday}'
-                AND contact_last_name != ''
-                AND contact_last_name IS NOT NULL
-                GROUP BY 1
             )
-            SELECT
-                (SELECT ARRAY_AGG(ROW(name, total_tickets)::VARCHAR)
-                 FROM (SELECT * FROM contractor_stats 
-                       ORDER BY total_tickets DESC LIMIT {limit})) as top_overall,
-                (SELECT ARRAY_AGG(ROW(name, emergency_tickets)::VARCHAR)
-                 FROM (SELECT * FROM contractor_stats 
-                       ORDER BY emergency_tickets DESC LIMIT {limit})) as top_emergency,
-                (SELECT ARRAY_AGG(ROW(name, unique_streets)::VARCHAR)
-                 FROM (SELECT * FROM contractor_stats 
-                       ORDER BY unique_streets DESC LIMIT {limit})) as top_streets
+            SELECT DISTINCT 
+                contact_first_name, 
+                contact_last_name,
+                COUNT(*) as count
+            FROM chicago_times
+            WHERE chicago_time::DATE = '{yesterday}'
+            GROUP BY contact_first_name, contact_last_name
+            ORDER BY count DESC
+            LIMIT 10
             """
             
-            result = self.db.execute(query).fetchone()
+            debug_result = self._execute_query(debug_query)
+            logger.debug(f"Debug contractor data:\n{debug_result}")
             
-            # First pass to get normalized names and their counts
-            name_counts = {}
-            for category_records in result:
-                if not category_records:
-                    continue
-                for record in category_records:
-                    parsed = self._parse_record(record)
-                    if parsed:
-                        name = parsed['name']
-                        count = parsed['count']
-                        if name not in name_counts:
-                            name_counts[name] = {'total': 0, 'emergency': 0, 'streets': 0}
-                        name_counts[name]['total'] = max(name_counts[name]['total'], count)
-                        name_counts[name]['emergency'] = max(name_counts[name]['emergency'], count)
-                        name_counts[name]['streets'] = max(name_counts[name]['streets'], count)
+            # Main query with contractor name handling
+            query = f"""
+            WITH chicago_times AS (
+                SELECT *,
+                    dig_date::TIMESTAMP AT TIME ZONE 'America/Chicago' AS chicago_time
+                FROM read_parquet('{str(config.data_dir)}/*.parquet')
+            ),
+            contractor_counts AS (
+                SELECT 
+                    CASE 
+                        WHEN contact_first_name = '' OR contact_first_name IS NULL THEN contact_last_name
+                        ELSE contact_first_name || ' ' || contact_last_name 
+                    END as contractor_name,
+                    COUNT(*) as permit_count
+                FROM chicago_times
+                WHERE chicago_time::DATE = '{yesterday}'
+                AND contact_last_name IS NOT NULL 
+                AND contact_last_name != ''
+                GROUP BY 1
+                HAVING COUNT(*) > 0
+                ORDER BY permit_count DESC
+                LIMIT {limit}
+            )
+            SELECT * FROM contractor_counts
+            """
             
-            # Second pass to create sorted leaderboards
-            leaderboards = {
-                'overall': [],
-                'emergency': [],
-                'streets': []
-            }
+            result = self._execute_query(query)
             
-            # Sort by total tickets
-            sorted_by_total = sorted(name_counts.items(), key=lambda x: x[1]['total'], reverse=True)
-            leaderboards['overall'] = [{'name': name, 'count': stats['total']} 
-                                     for name, stats in sorted_by_total[:limit]]
+            if result.empty:
+                logger.warning("No contractor data found for leaderboard")
+                return []
             
-            # Sort by emergency tickets
-            sorted_by_emergency = sorted(name_counts.items(), key=lambda x: x[1]['emergency'], reverse=True)
-            leaderboards['emergency'] = [{'name': name, 'count': stats['emergency']} 
-                                       for name, stats in sorted_by_emergency[:limit]]
+            # Process results and normalize names
+            leaderboard = []
+            for _, row in result.iterrows():
+                name = self._normalize_name(row['contractor_name'])
+                if name:  # Only add if we have a valid name
+                    leaderboard.append({
+                        'name': name,
+                        'count': int(row['permit_count'])
+                    })
             
-            # Sort by unique streets
-            sorted_by_streets = sorted(name_counts.items(), key=lambda x: x[1]['streets'], reverse=True)
-            leaderboards['streets'] = [{'name': name, 'count': stats['streets']} 
-                                     for name, stats in sorted_by_streets[:limit]]
+            # Sort by count descending
+            leaderboard = sorted(leaderboard, key=lambda x: x['count'], reverse=True)
             
-            logger.info("Contractor leaderboard generated successfully")
-            logger.debug(f"Top contractor: {leaderboards['overall'][0] if leaderboards['overall'] else None}")
+            logger.info(f"Generated leaderboard with {len(leaderboard)} entries")
+            logger.debug(f"Leaderboard: {leaderboard}")
             
-            return leaderboards
+            return leaderboard[:limit]
             
         except Exception as e:
             error_msg = f"Failed to generate contractor leaderboard: {str(e)}"
