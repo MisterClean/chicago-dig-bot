@@ -34,3 +34,4 @@ Pillow==10.0.0  # For image processing
 geopy==2.3.0  # For geocoding addresses
 APScheduler==3.10.4  # For production scheduling
 beautifulsoup4==4.12.2  # For parsing HTML from dig ticket website
+fastparquet==2024.11.0

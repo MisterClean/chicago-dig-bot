@@ -32,6 +32,7 @@ env/
 .vscode/
 *.swp
 *.swo
+.DS_Store
 
 # Logs and databases
 *.log
