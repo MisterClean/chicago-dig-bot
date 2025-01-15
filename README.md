@@ -4,53 +4,18 @@ A Python bot that tracks and analyzes Chicago 811 dig tickets, providing daily i
 
 ## System Architecture
 
-The bot operates through three main workflows: data refresh, daily updates, and random permit posts. Each workflow is built on a modular architecture that separates data collection, analysis, visualization, and social media integration:
-### Core Workflows
-
-1. **Data Refresh** (src/scripts/refresh_data.py)
-   - Performs complete data refresh from Chicago 811 API
-   - Cleans existing data files
-   - Validates and stores complete dataset
-   - Used for initial setup and data resets
-
-2. **Daily Update** (src/scripts/run_daily_update.py)
-   - Fetches recent permit data
-   - Updates storage with new records
-   - Generates statistics and visualizations
-   - Posts daily summary thread to Bluesky
-
-3. **Random Permit** (src/scripts/post_random_permit.py)
-   - Selects random permit from yesterday
-   - Fetches Google Street View image of location
-   - Posts permit details with image to Bluesky
-   - Runs every 3 hours via cron
-
-### Component Architecture
-
-```mermaid
-graph TD
-    A[Chicago Data Portal] -->|SODA API| B[Data Fetcher]
-    B -->|Raw Data| C[Data Storage]
-    C -->|SQLite| D[Query Engine]
-    C -->|Parquet| E[Analytics Engine]
-    D --> F[Daily Stats]
-    E --> F
-    F --> G[Visualization Engine]
-    F --> H[Social Poster]
-    G -->|Charts & Heatmaps| H
-    H -->|Posts & Threads| I[Bluesky]
-```
+The bot operates through three main workflows built on a modular architecture that separates data collection, analysis, visualization, and social media integration:
 
 ### Data Pipeline Architecture
 
 ```mermaid
 graph TD
-    subgraph Refresh
+    subgraph Refresh [Data Refresh (refresh_data.py)]
         R1[Chicago Data Portal] -->|Full Dataset| R2[Data Cleaning]
         R2 -->|Validated Data| R3[Storage Reset]
     end
     
-    subgraph Daily Update
+    subgraph Daily Update [Daily Update (run_daily_update.py)]
         D1[Chicago Data Portal] -->|Recent Data| D2[Data Validation]
         D2 -->|New Records| D3[Storage Update]
         D3 -->|Current Data| D4[Analytics]
@@ -58,7 +23,7 @@ graph TD
         D5 -->|Charts & Maps| D6[Social Posts]
     end
     
-    subgraph Random Permit
+    subgraph Random Permit [Random Permit (post_random_permit.py)]
         P1[Parquet Storage] -->|Query Yesterday| P2[Random Selection]
         P2 -->|Address| P3[Street View API]
         P3 -->|Location Image| P4[Format Post]
@@ -66,7 +31,7 @@ graph TD
     end
 ```
 
-The data pipeline ensures data quality and efficient storage:
+The data pipeline ensures data quality and efficient storage through:
 - **Data Fetcher**: Connects to Chicago's SODA API to fetch new dig tickets
 - **Validation Layer**: Ensures data integrity and proper formatting
 - **Dual Storage**:
@@ -107,26 +72,6 @@ The data pipeline ensures data quality and efficient storage:
 - Contractor leaderboards
 - Geographic clustering analysis
 - Emergency vs regular permit tracking
-
-## Technical Components
-
-### Data Storage (src/data/storage.py)
-- **DataStorage Class**: Manages both SQLite and Parquet storage
-- Efficient batch processing with WAL mode
-- Handles data type conversion and normalization
-- Maintains data integrity with UPSERT operations
-
-### Analytics Engine (src/analytics/stats.py)
-- **StatsGenerator Class**: Produces daily statistics and trends
-- Contractor name normalization with extensive rule sets
-- Historical comparisons and rolling averages
-- Geographic pattern analysis
-
-### Social Integration (src/social/bluesky.py)
-- **BlueskyPoster Class**: Manages social media updates
-- Thread creation with rich media support
-- Rate limiting and error handling
-- Test mode for development
 
 ## Data Schema
 
@@ -189,39 +134,28 @@ social:
 The bot requires Ubuntu/Debian-based Linux with the following system dependencies:
 
 ```bash
-# Update package list
+# Update package list and install Python tools
 sudo apt update
-
-# Install Python and development tools
 sudo apt install -y python3 python3-venv python3-pip git
 
-# Install Chrome and dependencies for headless operation (required for visualizations)
+# Install Chrome for visualizations
 wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-sudo apt install -y ./google-chrome-stable_current_amd64.deb
-sudo apt install -y xvfb libgbm1
+sudo apt install -y ./google-chrome-stable_current_amd64.deb xvfb libgbm1
 rm google-chrome-stable_current_amd64.deb
 ```
 
 ### Project Setup
 
-1. Clone the repository:
+1. Clone and setup environment:
 ```bash
 git clone https://github.com/MisterClean/chicago-dig-bot.git
 cd chicago-dig-bot
-```
-
-2. Create and activate a Python virtual environment:
-```bash
 python3 -m venv venv
 source venv/bin/activate
-```
-
-3. Install Python dependencies:
-```bash
 pip install -r requirements.txt
 ```
 
-4. Create `.env` file with your credentials:
+2. Configure credentials in `.env`:
 ```bash
 cat > .env << EOL
 # Bluesky credentials
@@ -236,62 +170,42 @@ GOOGLE_MAPS_API_KEY=your-api-key
 EOL
 ```
 
-5. Initialize the database:
+3. Initialize and populate database:
 ```bash
 PYTHONPATH=$PYTHONPATH:src python src/scripts/init_duckdb.py
-```
-
-6. Run initial data collection:
-```bash
 PYTHONPATH=$PYTHONPATH:src python src/scripts/refresh_data.py
-```
-
-### Verify Installation
-
-Test each component to ensure everything is working:
-
-1. Test random permit posting:
-```bash
-PYTHONPATH=$PYTHONPATH:src python src/scripts/post_random_permit.py
-```
-
-2. Test daily update:
-```bash
-PYTHONPATH=$PYTHONPATH:src python src/scripts/run_daily_update.py
 ```
 
 ### Troubleshooting
 
-1. **ModuleNotFoundError**: Make sure PYTHONPATH includes the src directory:
+Common issues and solutions:
+
+1. **ModuleNotFoundError**: Add src to PYTHONPATH:
 ```bash
 PYTHONPATH=$PYTHONPATH:src python your_script.py
 ```
 
-2. **Chrome/Selenium Issues**: If you encounter Chrome-related errors:
+2. **Chrome/Selenium Issues**: Verify dependencies:
 ```bash
-# Verify Chrome is installed
 google-chrome --version
-
-# Check/install additional dependencies
 sudo apt install -y xvfb libgbm1
 ```
 
-3. **Database Issues**: If DuckDB errors occur:
+3. **Database Issues**: Reinitialize if needed:
 ```bash
-# Reinitialize the database
 PYTHONPATH=$PYTHONPATH:src python src/scripts/init_duckdb.py
 ```
 
 ## Production Deployment
 
-The bot uses PM2 for process management in production. Here's how to set it up on a Lightsail instance:
+The bot uses PM2 for process management. Setup on a Lightsail instance:
 
-1. Install PM2 globally:
+1. Install and configure PM2:
 ```bash
 npm install pm2 -g
 ```
 
-2. Create PM2 ecosystem file (ecosystem.config.js):
+2. Create ecosystem.config.js:
 ```javascript
 module.exports = {
   apps: [{
@@ -319,26 +233,18 @@ module.exports = {
 }
 ```
 
-3. Start the processes:
+3. Start and configure PM2:
 ```bash
 pm2 start ecosystem.config.js
-```
-
-4. Save the PM2 process list:
-```bash
 pm2 save
-```
-
-5. Setup PM2 to start on system boot:
-```bash
 pm2 startup
 ```
 
-6. Monitor the processes:
+Monitor with:
 ```bash
-pm2 list  # View all processes
-pm2 logs  # View logs
-pm2 monit # Monitor CPU/Memory usage
+pm2 list   # View processes
+pm2 logs   # View logs
+pm2 monit  # Monitor resources
 ```
 
 ## Contributing
