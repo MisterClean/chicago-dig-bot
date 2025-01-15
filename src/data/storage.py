@@ -68,6 +68,18 @@ class DataStorage:
             logger.error(f"Error initializing database: {str(e)}")
             raise
 
+    def drop_permits_table(self):
+        """Drop the permits table if it exists."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("DROP TABLE IF EXISTS permits")
+                conn.commit()
+                logger.info("Successfully dropped permits table")
+        except Exception as e:
+            logger.error(f"Error dropping permits table: {str(e)}")
+            raise
+
     def _prepare_dataframe(self, df):
         """Prepare DataFrame by ensuring correct types and handling nulls."""
         # Work on a copy to avoid SettingWithCopyWarning
