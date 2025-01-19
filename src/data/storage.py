@@ -232,6 +232,11 @@ class DataStorage:
                 'total_records': len(df)
             }
             
+            # Add and format timestamp columns before storing
+            now = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+            df['created_at'] = now
+            df['updated_at'] = now
+            
             # Store in SQLite efficiently
             with sqlite3.connect(self.db_path) as conn:
                 # Direct bulk insert since we're doing a full refresh

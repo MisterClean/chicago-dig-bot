@@ -1,11 +1,13 @@
 """Module for fetching Chicago 811 dig permit data from various sources."""
 import os
 import json
+import time
 from datetime import datetime, timedelta
 import pytz
 import pandas as pd
 import requests
 from pathlib import Path
+import sys
 from src.utils.logging import get_logger
 from src.config import config
 
@@ -22,7 +24,9 @@ class DataFetcher:
         # Configure API settings
         self.api_url = config.soda_api_url
         self.api_token = os.getenv('CHICAGO_DATA_PORTAL_TOKEN')
-        self.api_timeout = 60  # Default timeout
+        self.api_timeout = 300  # Increased timeout for large datasets
+        self.max_retries = 3    # Number of retries for failed requests
+        self.retry_delay = 5    # Delay between retries in seconds
         
         # Track last fetch time
         self.last_fetch_file = self.data_dir / 'last_fetch.json'
@@ -119,7 +123,63 @@ class DataFetcher:
         try:
             csv_url = config.initial_csv_path
             logger.info(f"Downloading CSV from {csv_url}")
-            df = pd.read_csv(csv_url, dtype=str)
+            
+            # Download with requests using streaming and show progress
+            session = requests.Session()
+            retry_count = 0
+            response = None
+            
+            while retry_count < self.max_retries:
+                try:
+                    response = session.get(csv_url, stream=True, timeout=300)
+                    response.raise_for_status()
+                    break
+                except (requests.ConnectionError, requests.Timeout) as e:
+                    retry_count += 1
+                    if retry_count == self.max_retries:
+                        raise
+                    logger.warning(f"Download attempt {retry_count} failed: {str(e)}. Retrying in {self.retry_delay} seconds...")
+                    time.sleep(self.retry_delay)
+            
+            if not response:
+                raise Exception("Failed to establish connection after retries")
+                
+            with response:
+                # Get total file size
+                total_size = int(response.headers.get('content-length', 0))
+                
+                # Save to temporary file first
+                temp_csv = self.data_dir / 'temp_full_dataset.csv'
+                with open(temp_csv, 'wb') as f:
+                    if total_size == 0:
+                        logger.warning("Content length header missing, progress bar will be disabled")
+                    
+                    block_size = 8192
+                    downloaded = 0
+                    
+                    for chunk in response.iter_content(chunk_size=block_size):
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        
+                        if total_size > 0:
+                            # Calculate progress percentage
+                            progress = int(50 * downloaded / total_size)
+                            sys.stdout.write(
+                                f"\rDownloading: [{'=' * progress}{' ' * (50-progress)}] "
+                                f"{downloaded}/{total_size} bytes ({(downloaded/total_size)*100:.1f}%)"
+                            )
+                            sys.stdout.flush()
+                
+                if total_size > 0:
+                    sys.stdout.write('\n')
+                    sys.stdout.flush()
+                
+                # Read from temporary file
+                logger.info("Reading CSV file...")
+                df = pd.read_csv(temp_csv, dtype=str)
+                
+                # Clean up
+                temp_csv.unlink()
             
             # Update last fetch time
             self._update_last_fetch()
@@ -162,13 +222,24 @@ class DataFetcher:
             if self.api_token:
                 headers['X-App-Token'] = self.api_token
             
-            response = requests.get(
-                self.api_url,
-                params=params,
-                headers=headers,
-                timeout=self.api_timeout
-            )
-            response.raise_for_status()
+            # Add retry logic for SODA API requests
+            retry_count = 0
+            while retry_count < self.max_retries:
+                try:
+                    response = requests.get(
+                        self.api_url,
+                        params=params,
+                        headers=headers,
+                        timeout=self.api_timeout
+                    )
+                    response.raise_for_status()
+                    break
+                except (requests.ConnectionError, requests.Timeout) as e:
+                    retry_count += 1
+                    if retry_count == self.max_retries:
+                        raise
+                    logger.warning(f"SODA API attempt {retry_count} failed: {str(e)}. Retrying in {self.retry_delay} seconds...")
+                    time.sleep(self.retry_delay)
             
             data = response.json()
             df = pd.DataFrame(data)
